@@ -136,7 +136,8 @@ Polls Telegram for button clicks and text replies, sends responses to Claude via
 |--------|-----------|---------------|
 | Allow | `data="y"` + `type="permission_prompt"` | `send-keys Enter` |
 | Deny | `data="n"` + `type="permission_prompt"` | `send-keys Down`, `Down`, `Enter` |
-| Text reply | Any reply to tracked message | `send-keys C-u`, `{text}`, `Enter` |
+| Text reply (normal) | Reply to non-permission message | `send-keys C-u`, `{text}`, `Enter` |
+| Text reply (perm) | Reply to permission_prompt | `send-keys C-u`, `Down`, `Down`, `{text}`, `Enter` |
 | Ignore y/n | `data="y"\|"n"` + no permission_prompt | Answer callback only |
 
 ### Button Updates
@@ -145,6 +146,8 @@ After action, update button via `POST /bot{token}/editMessageReplyMarkup`:
 - Deny → "Reply with instructions"
 - Text reply (permission only) → "Replied"
 - Stale → "Expired"
+
+After handling Allow/Deny/Stale, message is removed from state to prevent re-sending keys.
 
 ### Stale Detection
 A message is stale if a newer message exists for the same tmux pane.
