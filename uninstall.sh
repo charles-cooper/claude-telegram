@@ -6,12 +6,12 @@
 # Test cases:
 #
 # 1. Only our hooks -> hooks section removed entirely:
-#    {"hooks": {"Stop": [our_hook], "Notification": [our_hook, our_hook]}}
+#    {"hooks": {"Notification": [our_hook], "PreCompact": [our_hook]}}
 #    becomes: {}
 #
 # 2. Mixed with other hooks -> only ours removed:
-#    {"hooks": {"Stop": [our_hook, other_hook], "Notification": [our_hook, other_hook]}}
-#    becomes: {"hooks": {"Stop": [other_hook], "Notification": [other_hook]}}
+#    {"hooks": {"Notification": [our_hook, other_hook]}}
+#    becomes: {"hooks": {"Notification": [other_hook]}}
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SETTINGS_FILE="$HOME/.claude/settings.json"
@@ -27,13 +27,6 @@ from pathlib import Path
 settings_file = Path("$SETTINGS_FILE")
 settings = json.loads(settings_file.read_text())
 hooks = settings.get("hooks", {})
-
-# Remove from Stop
-if "Stop" in hooks:
-    hooks["Stop"] = [h for h in hooks["Stop"]
-                     if h.get("hooks", [{}])[0].get("command") != "$HOOK_CMD"]
-    if not hooks["Stop"]:
-        del hooks["Stop"]
 
 # Remove from Notification
 if "Notification" in hooks:

@@ -16,7 +16,7 @@ JSON object from Claude Code hook system:
 
 ```json
 {
-  "hook_event_name": "Stop" | "Notification" | "PreCompact",
+  "hook_event_name": "Notification" | "PreCompact",
   "notification_type": "permission_prompt" | null,
   "trigger": "auto" | "manual",  // PreCompact only
   "message": "...",
@@ -46,7 +46,6 @@ JSONL file, each line:
 |-------|----------------|---------|
 | `permission_prompt` | Assistant text + formatted tool call | Allow / Deny |
 | `PreCompact` | "Compacting context (auto\|manual)..." | None |
-| `Stop` | Last assistant text from transcript | None |
 
 ### Tool Formatting
 
@@ -202,7 +201,6 @@ In `~/.claude/settings.json`:
 ```json
 {
   "hooks": {
-    "Stop": [{"hooks": [{"type": "command", "command": "python3 /path/telegram-hook.py"}]}],
     "Notification": [{"matcher": "permission_prompt", "hooks": [{"type": "command", "command": "..."}]}],
     "PreCompact": [
       {"matcher": "auto", "hooks": [{"type": "command", "command": "..."}]},

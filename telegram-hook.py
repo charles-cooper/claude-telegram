@@ -70,7 +70,7 @@ def strip_home(path: str) -> str:
 def format_tool_permission(tool_name: str, tool_input: dict) -> str:
     """Format a tool call for display."""
     if tool_name == "Bash":
-        cmd = tool_input.get("command", "")
+        cmd = tool_input.get("command", "").replace("```", "'''")
         desc = tool_input.get("description", "")
         desc_line = f"\n\n_{desc}_" if desc else ""
         return f"Claude is asking permission to run:\n\n```bash\n{cmd}\n```{desc_line}"
@@ -85,6 +85,7 @@ def format_tool_permission(tool_name: str, tool_input: dict) -> str:
                 fromfile=fp, tofile=fp, n=9999
             )
         )
+        diff = diff.replace("```", "'''")  # Escape inner code fences
         return f"Claude is asking permission to edit `{fp}`:\n\n```diff\n{diff}\n```"
 
     elif tool_name == "Write":

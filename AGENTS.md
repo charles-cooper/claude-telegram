@@ -31,7 +31,6 @@ This is a Telegram integration for Claude Code that:
 ### Hook Events
 - `permission_prompt` - contains generic message, read transcript for actual tool details
 - `PreCompact` - triggered before context compaction (auto or manual)
-- Stop hook - Claude finished responding
 - `elicitation_dialog` is MCP-only, not for built-in tools
 
 ### State Management

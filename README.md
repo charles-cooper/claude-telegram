@@ -5,7 +5,6 @@ Get Telegram notifications when Claude Code needs your attention.
 ## Features
 
 - **Permission prompts**: Notified when Claude asks to run Bash commands, edit files, etc.
-- **Stop events**: Notified when Claude stops and waits for input
 - **Compaction**: Notified when Claude compacts context
 
 For permission prompts, notifications include full context:
@@ -59,16 +58,6 @@ To get these:
 ```json
 {
   "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 /path/to/telegram-hook.py"
-          }
-        ]
-      }
-    ],
     "Notification": [
       {
         "matcher": "permission_prompt",
@@ -110,7 +99,6 @@ To get these:
 |---------|---------------|
 | `permission_prompt` | Claude needs permission for a tool |
 | `PreCompact` | Claude compacts context (both auto and manual) |
-| Stop hook | Claude stops execution |
 
 ## Files
 

@@ -71,12 +71,6 @@ settings = json.loads(settings_file.read_text())
 
 hooks = settings.setdefault("hooks", {})
 
-# Stop hook
-stop_hooks = hooks.setdefault("Stop", [])
-hook_entry = {"hooks": [{"type": "command", "command": "$HOOK_CMD"}]}
-if not any(h.get("hooks", [{}])[0].get("command") == "$HOOK_CMD" for h in stop_hooks):
-    stop_hooks.append(hook_entry)
-
 # Notification hooks
 notif_hooks = hooks.setdefault("Notification", [])
 for matcher in ["permission_prompt"]:
@@ -99,16 +93,6 @@ else
     cat > "$SETTINGS_FILE" << EOF
 {
   "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOOK_CMD"
-          }
-        ]
-      }
-    ],
     "Notification": [
       {
         "matcher": "permission_prompt",
@@ -148,7 +132,6 @@ fi
 
 echo
 echo "Done! You'll now receive Telegram notifications when:"
-echo "  - Claude stops and waits for input"
 echo "  - Claude asks for permission (Bash, Edit, Write)"
 echo "  - Claude compacts context (both auto and manual)"
 echo
