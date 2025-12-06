@@ -68,8 +68,13 @@ def main():
                             elif tool_name == "Write":
                                 fp = tool_input.get("file_path", "").removeprefix(str(Path.home()) + "/")
                                 context = f"Claude is asking permission to write `{fp}`"
+                            elif tool_name == "Read":
+                                fp = tool_input.get("file_path", "").removeprefix(str(Path.home()) + "/")
+                                context = f"Claude is asking permission to read `{fp}`"
                             else:
-                                context = f"Claude is asking permission to use {tool_name}"
+                                # Show tool input for unknown tools
+                                input_str = json.dumps(tool_input, indent=2)
+                                context = f"Claude is asking permission to use {tool_name}:\n\n```\n{input_str}\n```"
                             break
                     break
         except:
