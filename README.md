@@ -1,16 +1,26 @@
 # Claude Code Telegram Notifications
 
-Get Telegram notifications when Claude Code needs your attention.
+Get Telegram notifications when Claude Code needs your attention, and respond directly from Telegram.
 
 ## Features
 
 - **Permission prompts**: Notified when Claude asks to run Bash commands, edit files, etc.
-- **Compaction**: Notified when Claude compacts context
+- **Interactive buttons**: Allow or Deny permission requests directly from Telegram
+- **Text replies**: Reply to any notification to send input to Claude
+- **Compaction**: Notified when Claude starts and completes context compaction
 
 For permission prompts, notifications include full context:
 - Bash: command + description
 - Edit: unified diff of changes
-- Write: file path
+- Write: file path + content
+- Read: file path
+- AskUserQuestion: questions with options
+
+## Requirements
+
+- Python 3 with `requests` library
+- Claude Code must be running in **tmux** (the daemon uses tmux to inject keystrokes)
+- A Telegram bot (see Installation)
 
 ## Installation
 
@@ -61,44 +71,78 @@ To get these:
     "Notification": [
       {
         "matcher": "permission_prompt",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 /path/to/telegram-hook.py"
-          }
-        ]
+        "hooks": [{"type": "command", "command": "python3 /path/to/telegram-hook.py"}]
       }
     ],
     "PreCompact": [
-      {
-        "matcher": "auto",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 /path/to/telegram-hook.py"
-          }
-        ]
-      },
-      {
-        "matcher": "manual",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 /path/to/telegram-hook.py"
-          }
-        ]
-      }
+      {"matcher": "auto", "hooks": [{"type": "command", "command": "python3 /path/to/telegram-hook.py"}]},
+      {"matcher": "manual", "hooks": [{"type": "command", "command": "python3 /path/to/telegram-hook.py"}]}
+    ],
+    "PostCompact": [
+      {"matcher": "auto", "hooks": [{"type": "command", "command": "python3 /path/to/telegram-hook.py"}]},
+      {"matcher": "manual", "hooks": [{"type": "command", "command": "python3 /path/to/telegram-hook.py"}]}
     ]
   }
 }
 ```
 
+## Running the Daemon
+
+To respond to notifications from Telegram, run the daemon:
+
+```bash
+./telegram-daemon.py
+```
+
+The daemon:
+- Polls Telegram for button clicks and text replies
+- Sends responses to Claude via tmux keystrokes
+- Requires Claude Code to be running in tmux
+
+For background operation:
+
+```bash
+nohup ./telegram-daemon.py > /tmp/telegram-daemon.log 2>&1 &
+```
+
+## Usage
+
+### Permission Prompts
+
+When Claude needs permission, you'll receive a notification with:
+- The assistant's message explaining what it wants to do
+- Details of the tool call (command, diff, file contents, etc.)
+- **Allow** and **Deny** buttons
+
+Click **Allow** to approve, or **Deny** to reject with optional instructions.
+
+### Text Replies
+
+Reply to any notification to send text to Claude:
+- If there's a pending permission prompt and you reply to it, your text becomes the rejection reason
+- If there's no pending prompt, your text is sent as regular user input
+- If you reply to a different message while a permission is pending, it's blocked (to avoid corrupting TUI state)
+
+### Compaction Notifications
+
+You'll be notified when:
+- Context compaction starts (PreCompact)
+- Context compaction completes (PostCompact)
+
 ## Notification types
 
-| Matcher | Triggers when |
-|---------|---------------|
+| Event | Triggers when |
+|-------|---------------|
 | `permission_prompt` | Claude needs permission for a tool |
-| `PreCompact` | Claude compacts context (both auto and manual) |
+| `PreCompact` | Claude starts compacting context |
+| `PostCompact` | Claude finishes compacting context |
+
+## Architecture
+
+Two components work together:
+
+1. **telegram-hook.py** - Hook script invoked by Claude Code on events, sends notifications to Telegram
+2. **telegram-daemon.py** - Long-running daemon that polls Telegram and injects responses via tmux
 
 ## Files
 
@@ -107,4 +151,5 @@ To get these:
 | `~/telegram.json` | Bot token and chat ID |
 | `~/.claude/settings.json` | Claude Code hooks config |
 | `/tmp/claude-telegram-state.json` | Message state for reply tracking |
+| `/tmp/claude-telegram-state.lock` | File lock for state |
 | `/tmp/claude-telegram-hook.log` | Debug log |

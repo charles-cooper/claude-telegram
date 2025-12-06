@@ -6,7 +6,7 @@
 # Test cases:
 #
 # 1. Only our hooks -> hooks section removed entirely:
-#    {"hooks": {"Notification": [our_hook], "PreCompact": [our_hook]}}
+#    {"hooks": {"Notification": [our_hook], "PreCompact": [our_hook], "PostCompact": [our_hook]}}
 #    becomes: {}
 #
 # 2. Mixed with other hooks -> only ours removed:
@@ -41,6 +41,13 @@ if "PreCompact" in hooks:
                            if h.get("hooks", [{}])[0].get("command") != "$HOOK_CMD"]
     if not hooks["PreCompact"]:
         del hooks["PreCompact"]
+
+# Remove from PostCompact
+if "PostCompact" in hooks:
+    hooks["PostCompact"] = [h for h in hooks["PostCompact"]
+                            if h.get("hooks", [{}])[0].get("command") != "$HOOK_CMD"]
+    if not hooks["PostCompact"]:
+        del hooks["PostCompact"]
 
 if not hooks:
     del settings["hooks"]

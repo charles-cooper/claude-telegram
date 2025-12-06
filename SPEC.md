@@ -16,9 +16,9 @@ JSON object from Claude Code hook system:
 
 ```json
 {
-  "hook_event_name": "Notification" | "PreCompact",
+  "hook_event_name": "Notification" | "PreCompact" | "PostCompact",
   "notification_type": "permission_prompt" | null,
-  "trigger": "auto" | "manual",  // PreCompact only
+  "trigger": "auto" | "manual",  // PreCompact/PostCompact only
   "message": "...",
   "cwd": "/path/to/project",
   "session_id": "uuid",
@@ -46,6 +46,7 @@ JSONL file, each line:
 |-------|----------------|---------|
 | `permission_prompt` | Assistant text + formatted tool call | Allow / Deny |
 | `PreCompact` | "Compacting context (auto\|manual)..." | None |
+| `PostCompact` | "Context compaction complete (auto\|manual)" | None |
 
 ### Tool Formatting
 
@@ -214,6 +215,10 @@ In `~/.claude/settings.json`:
   "hooks": {
     "Notification": [{"matcher": "permission_prompt", "hooks": [{"type": "command", "command": "..."}]}],
     "PreCompact": [
+      {"matcher": "auto", "hooks": [{"type": "command", "command": "..."}]},
+      {"matcher": "manual", "hooks": [{"type": "command", "command": "..."}]}
+    ],
+    "PostCompact": [
       {"matcher": "auto", "hooks": [{"type": "command", "command": "..."}]},
       {"matcher": "manual", "hooks": [{"type": "command", "command": "..."}]}
     ]

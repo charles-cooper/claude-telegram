@@ -188,6 +188,10 @@ def build_context(hook_input: dict) -> tuple[str, str | None]:
         trigger = hook_input.get("trigger", "auto")
         return f"🔄 Compacting context ({trigger})...", None
 
+    if hook_event == "PostCompact":
+        trigger = hook_input.get("trigger", "auto")
+        return f"✅ Context compaction complete ({trigger})", None
+
     if notification_type == "permission_prompt":
         try:
             tool_call, assistant_text, tool_use_id = extract_tool_from_transcript(transcript_path)

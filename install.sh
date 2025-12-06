@@ -85,6 +85,13 @@ for matcher in ["auto", "manual"]:
     if not any(h.get("matcher") == matcher and h.get("hooks", [{}])[0].get("command") == "$HOOK_CMD" for h in precompact_hooks):
         precompact_hooks.append(entry)
 
+# PostCompact hooks (auto and manual)
+postcompact_hooks = hooks.setdefault("PostCompact", [])
+for matcher in ["auto", "manual"]:
+    entry = {"matcher": matcher, "hooks": [{"type": "command", "command": "$HOOK_CMD"}]}
+    if not any(h.get("matcher") == matcher and h.get("hooks", [{}])[0].get("command") == "$HOOK_CMD" for h in postcompact_hooks):
+        postcompact_hooks.append(entry)
+
 settings_file.write_text(json.dumps(settings, indent=2))
 print("Hooks installed.")
 EOF
@@ -105,6 +112,26 @@ else
       }
     ],
     "PreCompact": [
+      {
+        "matcher": "auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOOK_CMD"
+          }
+        ]
+      },
+      {
+        "matcher": "manual",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOOK_CMD"
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
       {
         "matcher": "auto",
         "hooks": [
