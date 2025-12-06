@@ -120,10 +120,9 @@ def extract_tool_from_transcript(transcript_path: str) -> tuple[dict | None, str
     """Extract pending tool call and assistant text from transcript.
 
     Returns (tool_call, assistant_text) tuple.
+    Only returns text from the same message as the tool_call.
     """
     lines = Path(transcript_path).read_text().strip().split("\n")
-    assistant_text = ""
-    tool_call = None
 
     for line in reversed(lines):
         entry = json.loads(line)
@@ -131,18 +130,21 @@ def extract_tool_from_transcript(transcript_path: str) -> tuple[dict | None, str
             continue
 
         content = entry.get("message", {}).get("content", [])
+        tool_call = None
+        assistant_text = ""
+
         for c in content:
             if not isinstance(c, dict):
                 continue
-            if c.get("type") == "tool_use" and not tool_call:
+            if c.get("type") == "tool_use":
                 tool_call = c
-            elif c.get("type") == "text" and not assistant_text:
+            elif c.get("type") == "text":
                 assistant_text = c.get("text", "")
 
-        if tool_call and assistant_text:
-            break
+        if tool_call:
+            return tool_call, assistant_text
 
-    return tool_call, assistant_text
+    return None, ""
 
 
 def extract_last_assistant_text(transcript_path: str) -> str:
