@@ -1,35 +1,36 @@
 """Shared utilities for Telegram integration."""
 
+import datetime
 import difflib
-import fcntl
 import json
 import os
 import requests
 import subprocess
 from pathlib import Path
 
+
+def log(msg: str):
+    """Print with timestamp (milliseconds)."""
+    ts = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    print(f"[{ts}] {msg}", flush=True)
+
 CONFIG_FILE = Path.home() / "telegram.json"
 STATE_FILE = Path("/tmp/claude-telegram-state.json")
-LOCK_FILE = Path("/tmp/claude-telegram-state.lock")
 
 
 def read_state() -> dict:
-    """Read state file with locking."""
+    """Read state file."""
     if not STATE_FILE.exists():
         return {}
-    with open(LOCK_FILE, "a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_SH)
-        try:
-            return json.loads(STATE_FILE.read_text())
-        except:
-            return {}
+    try:
+        return json.loads(STATE_FILE.read_text())
+    except:
+        return {}
 
 
 def write_state(state: dict):
-    """Write state file with locking."""
-    with open(LOCK_FILE, "a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        STATE_FILE.write_text(json.dumps(state))
+    """Write state file."""
+    STATE_FILE.write_text(json.dumps(state))
 
 
 def strip_home(path: str) -> str:

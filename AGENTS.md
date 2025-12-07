@@ -1,5 +1,9 @@
 # Agent Instructions
 
+## Mandatory: Read After Compaction
+
+Always read this file after context compaction to restore critical codebase knowledge.
+
 ## Mandatory: Update SPEC.md
 
 After ANY change to functionality, update `SPEC.md` to reflect the change. No exceptions. The spec documents all API contracts, data formats, and behaviors for maintaining the code when upstream APIs change.

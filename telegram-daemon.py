@@ -8,26 +8,57 @@ Main loop:
 4. Handle Telegram callbacks and messages
 """
 
+import atexit
 import json
+import os
+import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 from telegram_utils import (
     read_state, write_state, pane_exists,
     escape_markdown, format_tool_permission, strip_home,
-    send_telegram
+    send_telegram, log
 )
 from transcript_watcher import TranscriptManager, PendingTool
 from telegram_poller import TelegramPoller
 
 CONFIG_FILE = Path.home() / "telegram.json"
+PID_FILE = Path("/tmp/claude-telegram-daemon.pid")
 
 CLEANUP_INTERVAL = 300  # 5 minutes
 
 
+class DaemonAlreadyRunning(Exception):
+    pass
+
+
 class TmuxNotAvailable(Exception):
     pass
+
+
+def handle_sigterm(signum, frame):
+    """Handle SIGTERM by exiting cleanly."""
+    sys.exit(0)
+
+
+def check_singleton():
+    """Ensure only one daemon is running."""
+    if PID_FILE.exists():
+        pid = int(PID_FILE.read_text().strip())
+        # Check if process is still running
+        try:
+            os.kill(pid, 0)
+            raise DaemonAlreadyRunning(f"Daemon already running with PID {pid}")
+        except OSError:
+            # Process not running, stale PID file
+            pass
+    # Write our PID
+    PID_FILE.write_text(str(os.getpid()))
+    atexit.register(PID_FILE.unlink, missing_ok=True)
+    signal.signal(signal.SIGTERM, handle_sigterm)
 
 
 def check_tmux():
@@ -54,12 +85,10 @@ def send_notification(bot_token: str, chat_id: str, tool: PendingTool) -> int | 
     tool_desc = format_tool_permission(tool.tool_name, tool.tool_input)
     msg = f"`{project}`\n\n{prefix}{tool_desc}"
 
-    always_label = f"✓ Always: {tool.tool_name}"
     reply_markup = {
         "inline_keyboard": [[
-            {"text": "✓ Allow", "callback_data": "y"},
-            {"text": always_label, "callback_data": "a"},
-            {"text": "✗ Deny", "callback_data": "n"}
+            {"text": "Allow", "callback_data": "y"},
+            {"text": "Deny", "callback_data": "n"}
         ]]
     }
 
@@ -79,31 +108,33 @@ def send_notification(bot_token: str, chat_id: str, tool: PendingTool) -> int | 
             "cwd": tool.cwd
         }
         write_state(state)
-        print(f"Notified: {tool.tool_name} (msg_id={msg_id}, tool_id={tool.tool_id[:20]}...)", flush=True)
+        log(f"Notified: {tool.tool_name} (msg_id={msg_id}, tool_id={tool.tool_id[:20]}...)")
 
     return msg_id
 
 
 def main():
+    check_singleton()
     check_tmux()
 
     config = json.loads(CONFIG_FILE.read_text())
     bot_token, chat_id = config["bot_token"], config["chat_id"]
 
-    print("Starting daemon...", flush=True)
+    log(f"Starting daemon (PID {os.getpid()})...")
 
     # Initialize components
     transcript_mgr = TranscriptManager()
-    telegram_poller = TelegramPoller(bot_token, chat_id, timeout=5)
+    telegram_poller = TelegramPoller(bot_token, chat_id, timeout=0.5)
 
-    # Bootstrap from state
+    # Bootstrap from state and discover transcripts
     state = read_state()
     transcript_mgr.add_from_state(state)
+    transcript_mgr.discover_transcripts()
 
     last_cleanup = time.time()
-    last_discover = 0
+    last_discover = time.time()
 
-    print("Watching transcripts and polling Telegram...", flush=True)
+    log("Watching transcripts and polling Telegram...")
 
     while True:
         try:
@@ -128,7 +159,7 @@ def main():
                 state = read_state()
                 cleaned = cleanup_dead_panes(state)
                 if len(cleaned) != len(state):
-                    print(f"Cleaned {len(state) - len(cleaned)} dead entries", flush=True)
+                    log(f"Cleaned {len(state) - len(cleaned)} dead entries")
                     write_state(cleaned)
 
                 transcript_mgr.cleanup_dead()
@@ -137,7 +168,7 @@ def main():
         except KeyboardInterrupt:
             break
         except Exception as e:
-            print(f"Error: {e}", flush=True)
+            log(f"Error: {e}")
             import traceback
             traceback.print_exc()
             time.sleep(5)

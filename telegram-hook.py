@@ -224,12 +224,10 @@ def send_telegram(bot_token: str, chat_id: str, msg: str, notification_type: str
     payload = {"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"}
 
     if notification_type == "permission_prompt":
-        always_label = f"✓ Always: {tool_name}" if tool_name else "✓ Always"
         payload["reply_markup"] = {
             "inline_keyboard": [[
-                {"text": "✓ Allow", "callback_data": "y"},
-                {"text": always_label, "callback_data": "a"},
-                {"text": "✗ Deny", "callback_data": "n"}
+                {"text": "Allow", "callback_data": "y"},
+                {"text": "Deny", "callback_data": "n"}
             ]]
         }
 

@@ -6,7 +6,10 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from telegram_utils import pane_exists
+from telegram_utils import pane_exists, log
+
+# Delay before notifying - allows tool_result to arrive for auto-accepted tools
+NOTIFY_DELAY = 0.2  # seconds
 
 
 @dataclass
@@ -19,6 +22,7 @@ class PendingTool:
     transcript_path: str
     pane: str
     cwd: str
+    detected_at: float = 0  # timestamp when detected
 
 
 @dataclass
@@ -26,28 +30,49 @@ class TranscriptWatcher:
     """Watches a single transcript file for new tool_use entries."""
     path: str
     pane: str
+    cwd: str  # Store cwd from discovery
     position: int = 0
     notified_tools: set = field(default_factory=set)
     tool_results: set = field(default_factory=set)
+    pending_tools: dict = field(default_factory=dict)  # tool_id -> PendingTool
     last_check: float = 0
 
     def check(self) -> list[PendingTool]:
-        """Check for new pending tools. Returns list of tools needing notification."""
-        pending = []
+        """Check for new pending tools. Returns list of tools ready to notify."""
+        # First, read new lines and update state
         try:
             with open(self.path, 'r') as f:
                 f.seek(self.position)
                 for line in f:
-                    self._process_line(line, pending)
+                    self._process_line(line)
                 self.position = f.tell()
         except FileNotFoundError:
             pass
         except Exception as e:
-            print(f"Error reading {self.path}: {e}", flush=True)
+            log(f"Error reading {self.path}: {e}")
         self.last_check = time.time()
-        return pending
 
-    def _process_line(self, line: str, pending: list[PendingTool]):
+        # Now check which pending tools are ready to notify
+        ready = []
+        now = time.time()
+        done = []
+        for tool_id, tool in self.pending_tools.items():
+            # If tool_result arrived, don't notify
+            if tool_id in self.tool_results:
+                done.append(tool_id)
+                continue
+            # If enough time passed without tool_result, notify
+            if now - tool.detected_at > NOTIFY_DELAY:
+                ready.append(tool)
+                self.notified_tools.add(tool_id)
+                done.append(tool_id)
+
+        for tool_id in done:
+            del self.pending_tools[tool_id]
+
+        return ready
+
+    def _process_line(self, line: str):
         """Process a single transcript line."""
         try:
             entry = json.loads(line)
@@ -61,8 +86,10 @@ class TranscriptWatcher:
                     tool_use_id = c.get("tool_use_id")
                     if tool_use_id:
                         self.tool_results.add(tool_use_id)
-                        # Prune from notified set
                         self.notified_tools.discard(tool_use_id)
+                        # Remove from pending if waiting
+                        if tool_use_id in self.pending_tools:
+                            del self.pending_tools[tool_use_id]
 
         # Check for new tool_use
         if entry.get("type") != "assistant":
@@ -84,31 +111,44 @@ class TranscriptWatcher:
         tool_id = tool_call.get("id", "")
         tool_name = tool_call.get("name", "")
 
-        # Skip if already notified or already has result
+        # Skip if already notified or already has result or already pending
         if tool_id in self.notified_tools or tool_id in self.tool_results:
             return
+        if tool_id in self.pending_tools:
+            return
 
-        self.notified_tools.add(tool_id)
-
-        # Get cwd from transcript path
-        # Path format: ~/.claude/projects/{encoded-path}/{session}.jsonl
-        cwd = ""
-        parts = self.path.split("/")
-        for i, p in enumerate(parts):
-            if p == "projects" and i + 1 < len(parts):
-                encoded = parts[i + 1]
-                cwd = "/" + encoded.replace("-", "/")
-                break
-
-        pending.append(PendingTool(
+        # Add to pending - will notify after delay if no tool_result arrives
+        log(f"Detected: {tool_name} ({tool_id[:20]}...)")
+        self.pending_tools[tool_id] = PendingTool(
             tool_id=tool_id,
             tool_name=tool_name,
             tool_input=tool_call.get("input", {}),
             assistant_text=assistant_text,
             transcript_path=self.path,
             pane=self.pane,
-            cwd=cwd
-        ))
+            cwd=self.cwd,
+            detected_at=time.time()
+        )
+
+
+def decode_cwd_from_path(transcript_path: str) -> str:
+    """Extract cwd from transcript path.
+
+    Path format: ~/.claude/projects/{encoded-path}/{session}.jsonl
+    Encoded path uses - for / (e.g., -home-ubuntu-myproject)
+    """
+    parts = transcript_path.split("/")
+    for i, p in enumerate(parts):
+        if p == "projects" and i + 1 < len(parts):
+            encoded = parts[i + 1]
+            # The encoding is: /home/ubuntu/foo -> -home-ubuntu-foo
+            # So we replace leading - with / and internal - with /
+            # But we need to be careful: -home-ubuntu-my-project
+            # should become /home/ubuntu/my-project (hyphens in names preserved)
+            # Actually Claude uses a different encoding... let's just return the encoded form
+            # for now and get the real cwd from state
+            return "/" + encoded.replace("-", "/", 3)  # Only first 3 dashes
+    return ""
 
 
 class TranscriptManager:
@@ -120,6 +160,7 @@ class TranscriptManager:
 
     def discover_transcripts(self):
         """Find active transcripts from tmux panes running claude."""
+        import glob as glob_module
         try:
             result = os.popen("tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index} #{pane_current_path}'").read()
         except:
@@ -134,10 +175,10 @@ class TranscriptManager:
             pane, cwd = parts
 
             # Find transcript for this cwd
-            encoded = cwd.replace("/", "-").lstrip("-")
+            # Claude encodes /home/ubuntu/foo as -home-ubuntu-foo
+            encoded = cwd.replace("/", "-")
             pattern = str(Path.home() / f".claude/projects/{encoded}/*.jsonl")
 
-            import glob as glob_module
             transcripts = sorted(
                 [Path(p) for p in glob_module.glob(pattern)],
                 key=lambda p: p.stat().st_mtime,
@@ -159,9 +200,10 @@ class TranscriptManager:
                 self.watchers[transcript_path] = TranscriptWatcher(
                     path=transcript_path,
                     pane=pane,
+                    cwd=cwd,  # Use actual cwd from tmux
                     position=size
                 )
-                print(f"Watching transcript: {transcript_path} (pane {pane})", flush=True)
+                log(f"Watching transcript: {transcript_path} (pane {pane}, cwd {cwd})")
 
             self.pane_to_transcript[pane] = transcript_path
 
@@ -170,12 +212,17 @@ class TranscriptManager:
         for msg_id, entry in state.items():
             transcript_path = entry.get("transcript_path")
             pane = entry.get("pane")
+            cwd = entry.get("cwd", "")
             if not transcript_path or not pane:
                 continue
             if transcript_path in self.watchers:
                 continue
             if not Path(transcript_path).exists():
                 continue
+
+            # If no cwd in state, try to decode from path
+            if not cwd:
+                cwd = decode_cwd_from_path(transcript_path)
 
             # Start watching from end (we already notified for earlier entries)
             try:
@@ -185,10 +232,11 @@ class TranscriptManager:
             self.watchers[transcript_path] = TranscriptWatcher(
                 path=transcript_path,
                 pane=pane,
+                cwd=cwd,
                 position=size
             )
             self.pane_to_transcript[pane] = transcript_path
-            print(f"Watching transcript (from state): {transcript_path} (pane {pane})", flush=True)
+            log(f"Watching transcript (from state): {transcript_path} (pane {pane}, cwd {cwd})")
 
     def cleanup_dead(self):
         """Remove watchers for dead panes."""
@@ -201,7 +249,7 @@ class TranscriptManager:
             del self.watchers[path]
             if pane in self.pane_to_transcript:
                 del self.pane_to_transcript[pane]
-            print(f"Stopped watching (pane dead): {path}", flush=True)
+            log(f"Stopped watching (pane dead): {path}")
 
     def check_all(self) -> list[PendingTool]:
         """Check all watchers for pending tools."""

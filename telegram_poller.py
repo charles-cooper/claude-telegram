@@ -8,7 +8,7 @@ import requests
 
 from telegram_utils import (
     read_state, write_state, pane_exists,
-    answer_callback, send_reply, update_message_buttons
+    answer_callback, send_reply, update_message_buttons, log
 )
 
 
@@ -22,7 +22,7 @@ def tool_already_handled(transcript_path: str, tool_use_id: str) -> bool:
                 if tool_use_id in line and '"tool_result"' in line:
                     return True
     except Exception as e:
-        print(f"  Error checking transcript: {e}", flush=True)
+        log(f"  Error checking transcript: {e}")
     return False
 
 
@@ -48,7 +48,7 @@ def get_pending_tool_from_transcript(transcript_path: str) -> str | None:
         if pending:
             return pending.pop()
     except Exception as e:
-        print(f"  Error checking transcript for pending: {e}", flush=True)
+        log(f"  Error checking transcript for pending: {e}")
     return None
 
 
@@ -61,7 +61,7 @@ def send_to_pane(pane: str, text: str) -> bool:
         subprocess.run(["tmux", "send-keys", "-t", pane, "Enter"], check=True)
         return True
     except subprocess.CalledProcessError as e:
-        print(f"  Error: {e}", flush=True)
+        log(f"  Error: {e}")
         return False
 
 
@@ -78,7 +78,7 @@ def send_text_to_permission_prompt(pane: str, text: str) -> bool:
         subprocess.run(["tmux", "send-keys", "-t", pane, "Enter"], check=True)
         return True
     except subprocess.CalledProcessError as e:
-        print(f"  Error: {e}", flush=True)
+        log(f"  Error: {e}")
         return False
 
 
@@ -103,7 +103,7 @@ def send_permission_response(pane: str, response: str) -> bool:
             subprocess.run(["tmux", "send-keys", "-t", pane, "Enter"], check=True)
         return True
     except subprocess.CalledProcessError as e:
-        print(f"  Error: {e}", flush=True)
+        log(f"  Error: {e}")
         return False
 
 
@@ -112,9 +112,9 @@ def get_action_label(action: str, tool_name: str = None) -> str:
     if action == "y":
         return "✓ Allowed"
     elif action == "a":
-        return f"✓ Always: {tool_name}" if tool_name else "✓ Always allowed"
+        return "✓ Always"
     elif action == "n":
-        return "📝 Reply with instructions"
+        return "📝 Reply"
     elif action == "replied":
         return "💬 Replied"
     else:
@@ -135,16 +135,19 @@ class TelegramPoller:
         try:
             resp = requests.get(
                 f"https://api.telegram.org/bot{self.bot_token}/getUpdates",
-                params={"offset": self.offset, "timeout": self.timeout}
+                params={"offset": self.offset, "timeout": self.timeout},
+                timeout=self.timeout + 0.5
             )
             if not resp.ok:
                 return []
             updates = resp.json().get("result", [])
+            if updates:
+                log(f"Got {len(updates)} updates")
             for update in updates:
                 self.offset = update["update_id"] + 1
             return updates
         except Exception as e:
-            print(f"Telegram poll error: {e}", flush=True)
+            log(f"Telegram poll error: {e}")
             return []
 
     def handle_callback(self, callback: dict, state: dict) -> dict:
@@ -154,7 +157,7 @@ class TelegramPoller:
         cb_msg = callback.get("message", {})
         cb_msg_id = cb_msg.get("message_id")
         cb_chat_id = cb_msg.get("chat", {}).get("id")
-        print(f"Callback: {cb_data} on msg_id={cb_msg_id}", flush=True)
+        log(f"Callback: {cb_data} on msg_id={cb_msg_id}")
 
         if cb_data == "_":
             answer_callback(self.bot_token, cb_id, "Already handled")
@@ -163,7 +166,7 @@ class TelegramPoller:
         msg_key = str(cb_msg_id)
         if msg_key not in state:
             answer_callback(self.bot_token, cb_id, "Session not found")
-            print(f"  Skipping: msg_id not in state", flush=True)
+            log(f"  Skipping: msg_id not in state")
             return state
 
         entry = state[msg_key]
@@ -171,7 +174,7 @@ class TelegramPoller:
 
         if entry.get("handled"):
             answer_callback(self.bot_token, cb_id, "Already handled")
-            print(f"  Already handled", flush=True)
+            log(f"  Already handled")
             return state
 
         # Check if stale (newer message exists for same pane)
@@ -183,7 +186,7 @@ class TelegramPoller:
             answer_callback(self.bot_token, cb_id, "Stale prompt")
             update_message_buttons(self.bot_token, cb_chat_id, cb_msg_id, "⏰ Expired")
             state[msg_key]["handled"] = True
-            print(f"  Stale prompt for pane {pane}", flush=True)
+            log(f"  Stale prompt for pane {pane}")
             return state
 
         is_permission = entry.get("type") == "permission_prompt"
@@ -195,7 +198,7 @@ class TelegramPoller:
             answer_callback(self.bot_token, cb_id, "Already handled in TUI")
             update_message_buttons(self.bot_token, cb_chat_id, cb_msg_id, "⏰ Expired")
             state[msg_key]["handled"] = True
-            print(f"  Already handled in TUI (tool_use_id={tool_use_id})", flush=True)
+            log(f"  Already handled in TUI (tool_use_id={tool_use_id})")
             return state
 
         if cb_data in ("y", "n", "a"):
@@ -206,21 +209,21 @@ class TelegramPoller:
                     answer_callback(self.bot_token, cb_id, labels[cb_data])
                     update_message_buttons(self.bot_token, cb_chat_id, cb_msg_id, get_action_label(cb_data, tool_name))
                     state[msg_key]["handled"] = True
-                    print(f"  Sent {labels[cb_data]} to pane {pane}", flush=True)
+                    log(f"  Sent {labels[cb_data]} to pane {pane}")
                 else:
                     answer_callback(self.bot_token, cb_id, "Failed: pane dead")
-                    print(f"  Failed (pane {pane} dead)", flush=True)
+                    log(f"  Failed (pane {pane} dead)")
                     state[msg_key]["handled"] = True
             else:
                 answer_callback(self.bot_token, cb_id, "No active prompt")
-                print(f"  Ignoring y/n/a: not a permission prompt", flush=True)
+                log(f"  Ignoring y/n/a: not a permission prompt")
         else:
             if send_to_pane(pane, cb_data):
                 answer_callback(self.bot_token, cb_id, f"Sent: {cb_data}")
-                print(f"  Sent to pane {pane}: {cb_data}", flush=True)
+                log(f"  Sent to pane {pane}: {cb_data}")
             else:
                 answer_callback(self.bot_token, cb_id, "Failed")
-                print(f"  Failed (pane {pane} dead)", flush=True)
+                log(f"  Failed (pane {pane} dead)")
 
         return state
 
@@ -228,15 +231,15 @@ class TelegramPoller:
         """Handle a regular message (text reply). Returns updated state."""
         msg_id = msg.get("message_id")
         chat_id = str(msg.get("chat", {}).get("id"))
-        print(f"Message: msg_id={msg_id}", flush=True)
+        log(f"Message: msg_id={msg_id}")
 
         if chat_id != self.chat_id:
-            print(f"  Skipping: wrong chat", flush=True)
+            log(f"  Skipping: wrong chat")
             return state
 
         reply_to = msg.get("reply_to_message", {}).get("message_id")
         text = msg.get("text", "")
-        print(f"  reply_to={reply_to} text={text[:30] if text else None}", flush=True)
+        log(f"  reply_to={reply_to} text={text[:30] if text else None}")
 
         if not reply_to or str(reply_to) not in state or not text:
             return state
@@ -246,7 +249,7 @@ class TelegramPoller:
         transcript_path = entry.get("transcript_path")
 
         if not pane:
-            print(f"  Skipping: no pane in entry", flush=True)
+            log(f"  Skipping: no pane in entry")
             return state
 
         # Check transcript for pending tool_use
@@ -257,20 +260,20 @@ class TelegramPoller:
             if entry_tool_id == pending_tool_id:
                 # User is replying to the pending permission
                 if send_text_to_permission_prompt(pane, text):
-                    print(f"  Sent to permission prompt on pane {pane}: {text[:50]}...", flush=True)
+                    log(f"  Sent to permission prompt on pane {pane}: {text[:50]}...")
                     update_message_buttons(self.bot_token, self.chat_id, reply_to, "💬 Replied")
                 else:
-                    print(f"  Failed (pane {pane} dead)", flush=True)
+                    log(f"  Failed (pane {pane} dead)")
             else:
                 # Block: there's a different pending permission
-                print(f"  Blocked: transcript has pending tool ({pending_tool_id[:20]}...), reply to that first", flush=True)
+                log(f"  Blocked: transcript has pending tool ({pending_tool_id[:20]}...), reply to that first")
                 send_reply(self.bot_token, self.chat_id, msg_id, "⚠️ Ignored: there's a pending permission prompt. Please respond to that first.")
         else:
             # No pending permission - send as regular input
             if send_to_pane(pane, text):
-                print(f"  Sent to pane {pane}: {text[:50]}...", flush=True)
+                log(f"  Sent to pane {pane}: {text[:50]}...")
             else:
-                print(f"  Failed (pane {pane} dead)", flush=True)
+                log(f"  Failed (pane {pane} dead)")
 
         return state
 
