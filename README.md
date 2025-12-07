@@ -1,4 +1,6 @@
-# Claude Code Telegram Notifications
+# Claude Army
+
+Manage an army of Claude instances.
 
 Get Telegram notifications when Claude Code needs your attention, and respond directly from Telegram.
 
@@ -18,8 +20,8 @@ For permission prompts, notifications include full context:
 
 ## Requirements
 
+- Claude Code running inside a tmux session (the daemon uses tmux to inject keystrokes)
 - Python 3 with `requests` library
-- Claude Code must be running in **tmux** (the daemon uses tmux to inject keystrokes)
 - A Telegram bot (see Installation)
 
 ## Installation
