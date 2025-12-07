@@ -43,6 +43,7 @@ class IdleEvent:
     text: str
     pane: str
     cwd: str
+    msg_id: str = ""  # Claude message ID for tracking supersession
 
 
 @dataclass
@@ -58,6 +59,10 @@ class TranscriptWatcher:
     compactions: list = field(default_factory=list)  # Compaction events (notify immediately)
     idle_events: list = field(default_factory=list)  # Idle events (notify immediately)
     last_check: float = 0
+    # Track last notified message to avoid duplicate idle notifications
+    last_idle_msg_id: str = ""
+    # Track message IDs that have tool_use (for supersession detection)
+    tool_use_msg_ids: set = field(default_factory=set)
 
     def check(self) -> tuple[list[PendingTool], list[CompactionEvent], list[IdleEvent]]:
         """Check for new pending tools, compactions, and idle events."""
@@ -134,7 +139,7 @@ class TranscriptWatcher:
             return
 
         message = entry.get("message", {})
-        stop_reason = message.get("stop_reason")
+        msg_id = message.get("id", "")
         assistant_text = ""
         tool_call = None
 
@@ -145,14 +150,25 @@ class TranscriptWatcher:
                 elif c.get("type") == "tool_use":
                     tool_call = c
 
-        # Check for idle event (Claude finished speaking, waiting for input)
-        if stop_reason == "end_turn" and assistant_text:
-            log(f"Detected: idle (end_turn with text)")
-            self.idle_events.append(IdleEvent(
-                text=assistant_text,
-                pane=self.pane,
-                cwd=self.cwd
-            ))
+        # If we see tool_use, mark that this message is not idle
+        if tool_call and msg_id:
+            self.tool_use_msg_ids.add(msg_id)
+            # Clear any pending idle for this message
+            if self.last_idle_msg_id == msg_id:
+                self.last_idle_msg_id = ""  # Will be handled by daemon via supersession
+
+        # Check for idle event: assistant text with no tool_use
+        if assistant_text and not tool_call and msg_id:
+            # Only notify once per message
+            if msg_id != self.last_idle_msg_id:
+                log(f"Detected: idle (text-only message)")
+                self.idle_events.append(IdleEvent(
+                    text=assistant_text,
+                    pane=self.pane,
+                    cwd=self.cwd,
+                    msg_id=msg_id
+                ))
+                self.last_idle_msg_id = msg_id
             return
 
         if not tool_call:

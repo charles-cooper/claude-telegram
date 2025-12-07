@@ -64,6 +64,13 @@ These tools are never notified (always auto-approved):
 - `BashOutput`
 - `KillShell`
 - `AgentOutputTool`
+- `TodoWrite`
+
+### Idle Detection
+Text-only assistant messages (no tool_use) trigger idle notifications immediately.
+- Tracked by Claude message ID (`message.id`)
+- If tool_use appears for the same message ID within 4 seconds, notification is deleted (supersession)
+- If no tool_use appears, notification stays (Claude is waiting for input)
 
 ## Notifications
 
@@ -149,6 +156,11 @@ After action:
 - Text reply → "💬 Replied"
 - Stale → "⏰ Expired"
 
+### Smart Notification Deletion
+Tool notifications track `notified_at` timestamp. When tool_result arrives:
+- If < 4 seconds elapsed: delete notification (was auto-approved, false positive)
+- If >= 4 seconds elapsed: mark as expired (was TUI-handled, user may want to see it)
+
 ### Text Reply Logic
 1. Find pane and transcript_path from replied-to message
 2. Check transcript for pending tool_use
@@ -169,7 +181,21 @@ After action:
     "transcript_path": "/path/to/transcript.jsonl",
     "tool_use_id": "toolu_...",
     "tool_name": "Bash",
-    "cwd": "/path/to/project"
+    "cwd": "/path/to/project",
+    "notified_at": 1234567890.123
+  }
+}
+```
+
+Idle notifications use:
+```json
+{
+  "message_id": {
+    "pane": "session:window.pane",
+    "type": "idle",
+    "claude_msg_id": "msg_01...",
+    "cwd": "/path/to/project",
+    "notified_at": 1234567890.123
   }
 }
 ```

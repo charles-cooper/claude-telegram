@@ -103,6 +103,40 @@ def expire_old_buttons(bot_token: str, chat_id: str, pane: str, state: dict) -> 
 # If longer, mark expired (user may want to see what happened)
 QUICK_RESPONSE_THRESHOLD = 4.0  # seconds
 
+# If idle message gets superseded by tool_use within this time, delete it
+IDLE_SUPERSESSION_THRESHOLD = 4.0  # seconds
+
+
+def handle_superseded_idle(bot_token: str, chat_id: str, state: dict, transcript_mgr) -> list[str]:
+    """Handle idle notifications that got superseded by tool_use. Returns msg_ids to remove."""
+    to_remove = []
+    now = time.time()
+    for msg_id, entry in list(state.items()):
+        if entry.get("type") != "idle":
+            continue
+        claude_msg_id = entry.get("claude_msg_id")
+        if not claude_msg_id:
+            continue
+        # Check if this claude message now has tool_use in any watcher
+        transcript_path = None
+        for path, watcher in transcript_mgr.watchers.items():
+            if claude_msg_id in watcher.tool_use_msg_ids:
+                transcript_path = path
+                break
+        if transcript_path:
+            notified_at = entry.get("notified_at", 0)
+            elapsed = now - notified_at if notified_at else 999
+            if elapsed < IDLE_SUPERSESSION_THRESHOLD:
+                # Quick supersession - delete notification
+                if delete_message(bot_token, chat_id, int(msg_id)):
+                    log(f"Deleted idle (superseded {elapsed:.1f}s): msg_id={msg_id}")
+                to_remove.append(msg_id)
+            else:
+                # Slow supersession - just remove from state, message already seen
+                to_remove.append(msg_id)
+                log(f"Removed idle from state (superseded after {elapsed:.1f}s): msg_id={msg_id}")
+    return to_remove
+
 
 def handle_completed_tools(bot_token: str, chat_id: str, state: dict, transcript_mgr) -> list[str]:
     """Handle notifications for tools that completed. Delete if quick, expire if slow. Returns msg_ids to remove from state."""
@@ -145,13 +179,27 @@ def send_compaction_notification(bot_token: str, chat_id: str, event: Compaction
     log(f"Notified: compaction ({event.trigger})")
 
 
-def send_idle_notification(bot_token: str, chat_id: str, event: IdleEvent):
-    """Send Telegram notification when Claude is waiting for input."""
+def send_idle_notification(bot_token: str, chat_id: str, event: IdleEvent, state: dict) -> int | None:
+    """Send Telegram notification when Claude is waiting for input. Returns message_id."""
     project = strip_home(event.cwd)
     text = escape_markdown(event.text)
     msg = f"`{project}`\n\n💬 {text}"
-    send_telegram(bot_token, chat_id, msg)
-    log(f"Notified: idle")
+    result = send_telegram(bot_token, chat_id, msg)
+    if not result:
+        return None
+    msg_id = result.get("result", {}).get("message_id")
+    if msg_id and event.msg_id:
+        state[str(msg_id)] = {
+            "pane": event.pane,
+            "type": "idle",
+            "claude_msg_id": event.msg_id,
+            "cwd": event.cwd,
+            "notified_at": time.time()
+        }
+        log(f"Notified: idle (msg_id={msg_id}, claude_msg_id={event.msg_id[:20]}...)")
+    else:
+        log(f"Notified: idle")
+    return msg_id
 
 
 def send_notification(bot_token: str, chat_id: str, tool: PendingTool, state: dict) -> int | None:
@@ -244,7 +292,8 @@ def main():
             for event in compactions:
                 send_compaction_notification(bot_token, chat_id, event)
             for event in idle_events:
-                send_idle_notification(bot_token, chat_id, event)
+                if send_idle_notification(bot_token, chat_id, event, state):
+                    state_changed = True
 
             # Process any Telegram updates from background thread
             while not update_queue.empty():
@@ -253,6 +302,12 @@ def main():
 
             # Handle completed tools (delete quick, expire slow), expire old messages
             to_remove = handle_completed_tools(bot_token, chat_id, state, transcript_mgr)
+            for msg_id in to_remove:
+                del state[msg_id]
+                state_changed = True
+
+            # Handle superseded idle notifications
+            to_remove = handle_superseded_idle(bot_token, chat_id, state, transcript_mgr)
             for msg_id in to_remove:
                 del state[msg_id]
                 state_changed = True

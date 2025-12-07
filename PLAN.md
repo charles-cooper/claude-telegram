@@ -5,33 +5,21 @@ Telegram bot for Claude Code notifications and remote control.
 
 ---
 
-## 1. TODO: Smarter Message Deletion
+## Completed
 
-### Problem
-Currently we delete all notifications when tool_result arrives. But there's a difference:
-- **False positive**: Tool was auto-approved, notification was unnecessary → delete
-- **TUI-handled**: User responded in terminal, notification was valid but stale → keep/mark expired
+### Smarter Message Deletion
+- Notifications track `notified_at` timestamp
+- Quick response (< 4s) → delete (false positive)
+- Slow response (>= 4s) → mark expired (TUI-handled)
 
-### Solution
-Track timing between notification sent and tool_result received:
-- If tool_result arrives quickly (< ~1s after notification), likely auto-approved → delete
-- If tool_result arrives later, user probably handled in TUI → mark expired instead
-
-Alternative: Use hooks to confirm permission prompts (6s latency but definitive).
+### Idle Notifications
+- Text-only assistant messages trigger idle notifications immediately
+- If tool_use follows within 4s, notification is deleted (supersession)
+- Otherwise stays visible for remote user
 
 ---
 
-## 2. TODO: Handle Messages Before Idling
-
-### Problem
-When Claude finishes and is waiting for user input, we detect `end_turn` with text and send an idle notification. But if there was assistant text before a tool_use (which then got handled), the user never sees that text.
-
-### Solution
-Track assistant text that precedes tool calls. When tool completes (result arrives), if there was preceding text that wasn't shown, include it in the idle notification or send separately.
-
----
-
-## 3. Claude Operator / Orchestration (Future)
+## 1. TODO: Claude Operator / Orchestration (Future)
 
 ### Vision
 A Claude orchestration system controlled via Telegram:
