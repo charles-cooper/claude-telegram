@@ -11,16 +11,19 @@ Main loop:
 import atexit
 import json
 import os
+import queue
 import signal
 import subprocess
 import sys
+import threading
 import time
+import traceback
 from pathlib import Path
 
 from telegram_utils import (
     read_state, write_state, pane_exists,
     escape_markdown, format_tool_permission, strip_home,
-    send_telegram, log
+    send_telegram, log, update_message_buttons
 )
 from transcript_watcher import TranscriptManager, PendingTool
 from telegram_poller import TelegramPoller
@@ -78,8 +81,21 @@ def cleanup_dead_panes(state: dict) -> dict:
     return live
 
 
+def expire_old_buttons(bot_token: str, chat_id: str, pane: str):
+    """Expire buttons for old messages on this pane."""
+    state = read_state()
+    for msg_id, entry in state.items():
+        if entry.get("pane") == pane and not entry.get("handled"):
+            update_message_buttons(bot_token, chat_id, int(msg_id), "⏰ Expired")
+            entry["handled"] = True
+    write_state(state)
+
+
 def send_notification(bot_token: str, chat_id: str, tool: PendingTool) -> int | None:
     """Send Telegram notification for a pending tool. Returns message_id."""
+    # Expire old buttons for this pane first
+    expire_old_buttons(bot_token, chat_id, tool.pane)
+
     project = strip_home(tool.cwd)
     prefix = f"{escape_markdown(tool.assistant_text)}\n\n---\n\n" if tool.assistant_text else ""
     tool_desc = format_tool_permission(tool.tool_name, tool.tool_input)
@@ -124,7 +140,22 @@ def main():
 
     # Initialize components
     transcript_mgr = TranscriptManager()
-    telegram_poller = TelegramPoller(bot_token, chat_id, timeout=0.5)
+    telegram_poller = TelegramPoller(bot_token, chat_id, timeout=30)
+    update_queue = queue.Queue()
+
+    def telegram_poll_thread():
+        """Background thread for Telegram long-polling."""
+        while True:
+            try:
+                updates = telegram_poller.poll()
+                if updates:
+                    update_queue.put(updates)
+            except Exception as e:
+                log(f"Telegram thread error: {e}")
+                time.sleep(1)
+
+    telegram_thread = threading.Thread(target=telegram_poll_thread, daemon=True)
+    telegram_thread.start()
 
     # Bootstrap from state and discover transcripts
     state = read_state()
@@ -150,9 +181,15 @@ def main():
             for tool in pending_tools:
                 send_notification(bot_token, chat_id, tool)
 
-            # Poll Telegram (with short timeout to allow transcript polling)
-            updates = telegram_poller.poll()
-            telegram_poller.process_updates(updates)
+            # Process any Telegram updates from background thread
+            while True:
+                try:
+                    updates = update_queue.get_nowait()
+                except queue.Empty:
+                    break
+                telegram_poller.process_updates(updates)
+
+            time.sleep(0.1)
 
             # Periodic cleanup (every 5 minutes)
             if now - last_cleanup > CLEANUP_INTERVAL:
@@ -169,9 +206,7 @@ def main():
             break
         except Exception as e:
             log(f"Error: {e}")
-            import traceback
             traceback.print_exc()
-            time.sleep(5)
 
 
 if __name__ == "__main__":

@@ -23,6 +23,10 @@ This is a Telegram integration for Claude Code that watches transcripts and send
 - `telegram_utils.py` - Shared utilities (formatting, state, API)
 - `telegram-hook.py` - Legacy hook (slower, kept for backup)
 
+## Code Style
+
+- **No inline imports**: Always import at top level unless absolutely necessary to break circular dependencies.
+
 ## Critical Learnings
 
 ### Claude Code TUI Navigation
@@ -40,6 +44,7 @@ This is a Telegram integration for Claude Code that watches transcripts and send
 - `editMessageReplyMarkup` to update buttons after action
 - `answerCallbackQuery` to dismiss loading state on button click
 - Android client has limited syntax highlighting (no green for diff + lines)
+- `getUpdates` timeout parameter must be **integer** (seconds) - floats like 0.5 don't work for long polling
 
 ### Hook Events
 - `permission_prompt` - contains generic message, read transcript for actual tool details

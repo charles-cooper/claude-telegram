@@ -9,7 +9,7 @@ from pathlib import Path
 from telegram_utils import pane_exists, log
 
 # Delay before notifying - allows tool_result to arrive for auto-accepted tools
-NOTIFY_DELAY = 0.2  # seconds
+NOTIFY_DELAY = 0.4  # seconds
 
 
 @dataclass

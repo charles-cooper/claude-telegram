@@ -125,6 +125,8 @@ class TelegramPoller:
     """Polls Telegram for updates and handles them."""
 
     def __init__(self, bot_token: str, chat_id: str, timeout: int = 5):
+        # Telegram API requires timeout to be int >= 1
+        assert isinstance(timeout, int) and timeout >= 1
         self.bot_token = bot_token
         self.chat_id = chat_id
         self.timeout = timeout
@@ -136,7 +138,7 @@ class TelegramPoller:
             resp = requests.get(
                 f"https://api.telegram.org/bot{self.bot_token}/getUpdates",
                 params={"offset": self.offset, "timeout": self.timeout},
-                timeout=self.timeout + 0.5
+                timeout=self.timeout + 2
             )
             if not resp.ok:
                 return []

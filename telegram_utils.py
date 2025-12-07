@@ -6,13 +6,17 @@ import json
 import os
 import requests
 import subprocess
+import threading
 from pathlib import Path
+
+_log_lock = threading.Lock()
 
 
 def log(msg: str):
-    """Print with timestamp (milliseconds)."""
+    """Print with timestamp (milliseconds). Thread-safe."""
     ts = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-    print(f"[{ts}] {msg}", flush=True)
+    with _log_lock:
+        print(f"[{ts}] {msg}", flush=True)
 
 CONFIG_FILE = Path.home() / "telegram.json"
 STATE_FILE = Path("/tmp/claude-telegram-state.json")
