@@ -23,7 +23,8 @@ from pathlib import Path
 from telegram_utils import (
     read_state, write_state, pane_exists,
     escape_markdown, format_tool_permission, strip_home,
-    send_telegram, log, update_message_buttons, delete_message
+    send_telegram, log, update_message_buttons, delete_message,
+    register_bot_commands
 )
 from transcript_watcher import TranscriptManager, PendingTool, CompactionEvent, IdleEvent
 from telegram_poller import TelegramPoller
@@ -108,9 +109,12 @@ IDLE_SUPERSESSION_THRESHOLD = 4.0  # seconds
 
 
 def handle_superseded_idle(bot_token: str, chat_id: str, state: dict, transcript_mgr) -> list[str]:
-    """Handle idle notifications that got superseded by tool_use. Returns msg_ids to remove."""
+    """Handle idle notifications that got superseded by tool_use. Returns msg_ids to remove from state.
+
+    Note: We don't delete the Telegram message - the text before tool_use is still useful context.
+    We just clean up state so we don't track stale entries.
+    """
     to_remove = []
-    now = time.time()
     for msg_id, entry in list(state.items()):
         if entry.get("type") != "idle":
             continue
@@ -118,23 +122,12 @@ def handle_superseded_idle(bot_token: str, chat_id: str, state: dict, transcript
         if not claude_msg_id:
             continue
         # Check if this claude message now has tool_use in any watcher
-        transcript_path = None
-        for path, watcher in transcript_mgr.watchers.items():
+        for watcher in transcript_mgr.watchers.values():
             if claude_msg_id in watcher.tool_use_msg_ids:
-                transcript_path = path
+                # Just remove from state, keep the Telegram message visible
+                to_remove.append(msg_id)
+                log(f"Idle superseded by tool_use, keeping message: msg_id={msg_id}")
                 break
-        if transcript_path:
-            notified_at = entry.get("notified_at", 0)
-            elapsed = now - notified_at if notified_at else 999
-            if elapsed < IDLE_SUPERSESSION_THRESHOLD:
-                # Quick supersession - delete notification
-                if delete_message(bot_token, chat_id, int(msg_id)):
-                    log(f"Deleted idle (superseded {elapsed:.1f}s): msg_id={msg_id}")
-                to_remove.append(msg_id)
-            else:
-                # Slow supersession - just remove from state, message already seen
-                to_remove.append(msg_id)
-                log(f"Removed idle from state (superseded after {elapsed:.1f}s): msg_id={msg_id}")
     return to_remove
 
 
@@ -244,6 +237,7 @@ def main():
     bot_token, chat_id = config["bot_token"], config["chat_id"]
 
     log(f"Starting daemon (PID {os.getpid()})...")
+    register_bot_commands(bot_token)
 
     # Initialize components
     transcript_mgr = TranscriptManager()

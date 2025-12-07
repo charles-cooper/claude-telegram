@@ -183,3 +183,16 @@ def react_to_message(bot_token: str, chat_id: str, msg_id: int, emoji: str = "ðŸ
             "reaction": [{"type": "emoji", "emoji": emoji}]
         }
     )
+
+
+def register_bot_commands(bot_token: str):
+    """Register bot commands with Telegram. Raises on failure."""
+    commands = [
+        {"command": "debug", "description": "Debug a message (reply to it)"}
+    ]
+    resp = requests.post(
+        f"https://api.telegram.org/bot{bot_token}/setMyCommands",
+        json={"commands": commands}
+    )
+    resp.raise_for_status()
+    log("Registered bot commands")

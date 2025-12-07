@@ -228,6 +228,28 @@ Every 5 minutes:
 | `/tmp/claude-telegram-state.lock` | File lock |
 | `/tmp/claude-telegram-daemon.log` | Daemon log |
 
+## Bot Commands
+
+### Registering Commands
+Commands are registered via the `setMyCommands` API at startup:
+```
+POST https://api.telegram.org/bot{token}/setMyCommands
+{
+  "commands": [
+    {"command": "debug", "description": "Debug a message (reply to it)"}
+  ]
+}
+```
+
+### /debug Command
+When user replies `/debug` to a notification:
+1. Look up the message in state
+2. Format debug info (type, pane, timestamps, tool info, etc.)
+3. Send debug info TO THE PANE as Claude input (not back to Telegram)
+4. Claude can then analyze the issue
+
+This allows remote debugging - user identifies problem message, Claude receives context.
+
 ## Claude Code TUI Behavior
 
 ### Permission Prompt Options
