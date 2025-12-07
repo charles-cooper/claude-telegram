@@ -7,7 +7,7 @@ import time
 import requests
 
 from telegram_utils import (
-    pane_exists, answer_callback, send_reply, update_message_buttons, log,
+    State, pane_exists, answer_callback, send_reply, update_message_buttons, log,
     react_to_message
 )
 from bot_commands import CommandHandler
@@ -75,6 +75,9 @@ def send_text_to_permission_prompt(pane: str, text: str) -> bool:
         time.sleep(0.02)
         subprocess.run(["tmux", "send-keys", "-t", pane, "Down"], check=True)
         time.sleep(0.02)
+        # Select option 3 to activate text input
+        subprocess.run(["tmux", "send-keys", "-t", pane, "Enter"], check=True)
+        time.sleep(0.1)
         subprocess.run(["tmux", "send-keys", "-t", pane, "-l", text], check=True)
         time.sleep(0.1)
         subprocess.run(["tmux", "send-keys", "-t", pane, "Enter"], check=True)
@@ -126,14 +129,15 @@ def get_action_label(action: str, tool_name: str = None) -> str:
 class TelegramPoller:
     """Polls Telegram for updates and handles them."""
 
-    def __init__(self, bot_token: str, chat_id: str, timeout: int = 5):
+    def __init__(self, bot_token: str, chat_id: str, state: State, timeout: int = 5):
         # Telegram API requires timeout to be int >= 1
         assert isinstance(timeout, int) and timeout >= 1
         self.bot_token = bot_token
         self.chat_id = chat_id
+        self.state = state
         self.timeout = timeout
         self.offset = 0
-        self.command_handler = CommandHandler(bot_token, chat_id)
+        self.command_handler = CommandHandler(bot_token, chat_id, state)
 
     def poll(self) -> list[dict]:
         """Poll for new updates. Returns list of updates."""
@@ -155,8 +159,8 @@ class TelegramPoller:
             log(f"Telegram poll error: {e}")
             return []
 
-    def handle_callback(self, callback: dict, state: dict) -> dict:
-        """Handle a callback query (button click). Returns updated state."""
+    def handle_callback(self, callback: dict):
+        """Handle a callback query (button click)."""
         cb_id = callback["id"]
         cb_data = callback.get("data", "")
         cb_msg = callback.get("message", {})
@@ -166,33 +170,33 @@ class TelegramPoller:
 
         if cb_data == "_":
             answer_callback(self.bot_token, cb_id, "Already handled")
-            return state
+            return
 
         msg_key = str(cb_msg_id)
-        if msg_key not in state:
+        if msg_key not in self.state:
             answer_callback(self.bot_token, cb_id, "Session not found")
             log(f"  Skipping: msg_id not in state")
-            return state
+            return
 
-        entry = state[msg_key]
+        entry = self.state.get(msg_key)
         pane = entry.get("pane")
 
         if entry.get("handled"):
             answer_callback(self.bot_token, cb_id, "Already handled")
             log(f"  Already handled")
-            return state
+            return
 
         # Check if stale (newer message exists for same pane)
         latest = max(
-            (int(mid) for mid, e in state.items() if e.get("pane") == pane),
+            (int(mid) for mid, e in self.state.items() if e.get("pane") == pane),
             default=0
         )
         if cb_msg_id < latest:
             answer_callback(self.bot_token, cb_id, "Stale prompt")
             update_message_buttons(self.bot_token, cb_chat_id, cb_msg_id, "⏰ Expired")
-            state[msg_key]["handled"] = True
+            self.state.update(msg_key, handled=True)
             log(f"  Stale prompt for pane {pane}")
-            return state
+            return
 
         is_permission = entry.get("type") == "permission_prompt"
 
@@ -202,9 +206,9 @@ class TelegramPoller:
         if is_permission and tool_already_handled(transcript_path, tool_use_id):
             answer_callback(self.bot_token, cb_id, "Already handled in TUI")
             update_message_buttons(self.bot_token, cb_chat_id, cb_msg_id, "⏰ Expired")
-            state[msg_key]["handled"] = True
+            self.state.update(msg_key, handled=True)
             log(f"  Already handled in TUI (tool_use_id={tool_use_id})")
-            return state
+            return
 
         if cb_data in ("y", "n", "a"):
             if is_permission:
@@ -213,12 +217,12 @@ class TelegramPoller:
                 if send_permission_response(pane, cb_data):
                     answer_callback(self.bot_token, cb_id, labels[cb_data])
                     update_message_buttons(self.bot_token, cb_chat_id, cb_msg_id, get_action_label(cb_data, tool_name))
-                    state[msg_key]["handled"] = True
+                    self.state.update(msg_key, handled=True)
                     log(f"  Sent {labels[cb_data]} to pane {pane}")
                 else:
                     answer_callback(self.bot_token, cb_id, "Failed: pane dead")
+                    self.state.update(msg_key, handled=True)
                     log(f"  Failed (pane {pane} dead)")
-                    state[msg_key]["handled"] = True
             else:
                 answer_callback(self.bot_token, cb_id, "No active prompt")
                 log(f"  Ignoring y/n/a: not a permission prompt")
@@ -230,36 +234,34 @@ class TelegramPoller:
                 answer_callback(self.bot_token, cb_id, "Failed")
                 log(f"  Failed (pane {pane} dead)")
 
-        return state
-
-    def handle_message(self, msg: dict, state: dict) -> dict:
-        """Handle a regular message (text reply). Returns updated state."""
+    def handle_message(self, msg: dict):
+        """Handle a regular message (text reply)."""
         msg_id = msg.get("message_id")
         chat_id = str(msg.get("chat", {}).get("id"))
         log(f"Message: msg_id={msg_id}")
 
         if chat_id != self.chat_id:
             log(f"  Skipping: wrong chat")
-            return state
+            return
 
         reply_to = msg.get("reply_to_message", {}).get("message_id")
         text = msg.get("text", "")
         log(f"  reply_to={reply_to} text={text[:30] if text else None}")
 
         # Handle bot commands (/debug, /todo, etc.)
-        if self.command_handler.handle_command(msg, state):
-            return state
+        if self.command_handler.handle_command(msg):
+            return
 
-        if not reply_to or str(reply_to) not in state or not text:
-            return state
+        if not reply_to or str(reply_to) not in self.state or not text:
+            return
 
-        entry = state[str(reply_to)]
+        entry = self.state.get(str(reply_to))
         pane = entry.get("pane")
         transcript_path = entry.get("transcript_path")
 
         if not pane:
             log(f"  Skipping: no pane in entry")
-            return state
+            return
 
         # Check transcript for pending tool_use
         pending_tool_id = get_pending_tool_from_transcript(transcript_path)
@@ -271,6 +273,7 @@ class TelegramPoller:
                 if send_text_to_permission_prompt(pane, text):
                     log(f"  Sent to permission prompt on pane {pane}: {text[:50]}...")
                     update_message_buttons(self.bot_token, self.chat_id, reply_to, "💬 Replied")
+                    self.state.update(str(reply_to), handled=True)
                     react_to_message(self.bot_token, self.chat_id, msg_id)
                 else:
                     log(f"  Failed (pane {pane} dead)")
@@ -286,19 +289,17 @@ class TelegramPoller:
             else:
                 log(f"  Failed (pane {pane} dead)")
 
-        return state
-
-    def process_updates(self, updates: list[dict], state: dict) -> None:
-        """Process a list of updates. Updates state in-place."""
+    def process_updates(self, updates: list[dict]):
+        """Process a list of updates."""
         if not updates:
             return
 
         for update in updates:
             callback = update.get("callback_query")
             if callback:
-                self.handle_callback(callback, state)
+                self.handle_callback(callback)
                 continue
 
             msg = update.get("message", {})
             if msg:
-                self.handle_message(msg, state)
+                self.handle_message(msg)

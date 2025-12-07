@@ -5,7 +5,7 @@ import json
 import time
 
 from telegram_utils import (
-    pane_exists, send_reply, react_to_message, log
+    State, pane_exists, send_reply, react_to_message, log
 )
 
 
@@ -40,11 +40,12 @@ def tool_already_handled(transcript_path: str, tool_use_id: str) -> bool:
 class CommandHandler:
     """Handles bot commands like /debug, /todo."""
 
-    def __init__(self, bot_token: str, chat_id: str):
+    def __init__(self, bot_token: str, chat_id: str, state: State):
         self.bot_token = bot_token
         self.chat_id = chat_id
+        self.state = state
 
-    def handle_command(self, msg: dict, state: dict) -> bool:
+    def handle_command(self, msg: dict) -> bool:
         """Handle a command message. Returns True if handled, False otherwise."""
         text = msg.get("text", "").strip()
         msg_id = msg.get("message_id")
@@ -59,21 +60,21 @@ class CommandHandler:
                 user_note = text[6:].strip()
             elif text_lower.startswith("debug"):
                 user_note = text[5:].strip()
-            self._handle_debug(msg_id, reply_to, state, user_note)
+            self._handle_debug(msg_id, reply_to, user_note)
             return True
 
         # /todo <item> - add todo to Claude's stack
         if text_lower.startswith("/todo"):
-            self._handle_todo(msg_id, text, state)
+            self._handle_todo(msg_id, text)
             return True
 
         return False
 
-    def _get_active_pane(self, state: dict) -> str | None:
+    def _get_active_pane(self) -> str | None:
         """Get the most recently active pane from state."""
         latest_time = 0
         latest_pane = None
-        for entry in state.values():
+        for _, entry in self.state.items():
             notified_at = entry.get("notified_at", 0)
             pane = entry.get("pane")
             if pane and notified_at > latest_time:
@@ -103,17 +104,17 @@ class CommandHandler:
             log(f"  Error searching logs: {e}")
             return None
 
-    def _handle_debug(self, msg_id: int, reply_to: int, state: dict, user_note: str = ""):
+    def _handle_debug(self, msg_id: int, reply_to: int, user_note: str = ""):
         """Handle /debug command - inject debug info into Claude conversation."""
         log(f"  /debug for msg_id={reply_to}")
         reply_to_str = str(reply_to)
 
-        if reply_to_str not in state:
+        if reply_to_str not in self.state:
             # Search logs for this message ID
             log_info = self._search_logs_for_msg(reply_to)
             if log_info:
                 # Inject log info into active pane
-                pane = self._get_active_pane(state)
+                pane = self._get_active_pane()
                 if pane and pane_exists(pane):
                     lines = [f"[DEBUG] msg_id={reply_to} (not in state, from logs)", ""]
                     lines.extend(log_info)
@@ -124,7 +125,7 @@ class CommandHandler:
                        f"msg_id={reply_to} not in state, no log entries found")
             return
 
-        entry = state[reply_to_str]
+        entry = self.state.get(reply_to_str)
         pane = entry.get("pane")
 
         if not pane or not pane_exists(pane):
@@ -167,7 +168,7 @@ class CommandHandler:
         else:
             send_reply(self.bot_token, self.chat_id, msg_id, "Failed to send to pane")
 
-    def _handle_todo(self, msg_id: int, text: str, state: dict):
+    def _handle_todo(self, msg_id: int, text: str):
         """Handle /todo command - inject todo item into Claude conversation."""
         # Extract todo text after /todo
         todo_text = text[5:].strip()  # Remove "/todo"
@@ -176,7 +177,7 @@ class CommandHandler:
                        "Usage: /todo <item>")
             return
 
-        pane = self._get_active_pane(state)
+        pane = self._get_active_pane()
         if not pane or not pane_exists(pane):
             send_reply(self.bot_token, self.chat_id, msg_id,
                        "No active pane found")

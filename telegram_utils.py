@@ -22,19 +22,57 @@ CONFIG_FILE = Path.home() / "telegram.json"
 STATE_FILE = Path("/tmp/claude-telegram-state.json")
 
 
-def read_state() -> dict:
-    """Read state file."""
-    if not STATE_FILE.exists():
-        return {}
-    try:
-        return json.loads(STATE_FILE.read_text())
-    except:
-        return {}
+class State:
+    """Persistent dict with auto-flush on modification."""
 
+    def __init__(self):
+        self._data = self._read()
 
-def write_state(state: dict):
-    """Write state file."""
-    STATE_FILE.write_text(json.dumps(state))
+    def _read(self) -> dict:
+        if not STATE_FILE.exists():
+            return {}
+        try:
+            return json.loads(STATE_FILE.read_text())
+        except:
+            return {}
+
+    def _flush(self):
+        STATE_FILE.write_text(json.dumps(self._data))
+
+    def get(self, msg_id: str) -> dict | None:
+        """Get entry by message ID."""
+        return self._data.get(str(msg_id))
+
+    def __contains__(self, msg_id: str) -> bool:
+        return str(msg_id) in self._data
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def items(self):
+        return self._data.items()
+
+    def add(self, msg_id: str, entry: dict):
+        """Add entry and flush."""
+        self._data[str(msg_id)] = entry
+        self._flush()
+
+    def update(self, msg_id: str, **fields):
+        """Update fields on entry and flush."""
+        if str(msg_id) in self._data:
+            self._data[str(msg_id)].update(fields)
+            self._flush()
+
+    def remove(self, msg_id: str):
+        """Remove entry and flush."""
+        if str(msg_id) in self._data:
+            del self._data[str(msg_id)]
+            self._flush()
+
+    @property
+    def data(self) -> dict:
+        """Get raw data dict (read-only view for iteration)."""
+        return self._data
 
 
 def strip_home(path: str) -> str:
@@ -42,27 +80,33 @@ def strip_home(path: str) -> str:
     return path.removeprefix(str(Path.home()) + "/")
 
 
-def escape_markdown(text: str) -> str:
-    """Escape Telegram markdown special characters in plain text.
+def escape_markdown_v2(text: str) -> str:
+    """Escape ALL MarkdownV2 special chars in plain text.
 
-    For parse_mode="Markdown" (not MarkdownV2):
-    - Only _ and * trigger formatting
-    - [] only matter for links [text](url), don't need escaping
-    - Triple backticks replaced with ''' to avoid code block issues
+    Use this for text that will appear OUTSIDE code blocks.
+    Do NOT use on text that contains code blocks - escape pieces before assembly instead.
     """
-    text = text.replace("```", "'''")
-    for char in ['_', '*']:
+    # All MarkdownV2 special chars - backslash first to avoid double-escaping
+    special_chars = ['\\', '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    for char in special_chars:
         text = text.replace(char, '\\' + char)
     return text
 
 
-def format_tool_permission(tool_name: str, tool_input: dict) -> str:
-    """Format a tool call for display."""
+def format_tool_permission(tool_name: str, tool_input: dict, markdown_v2: bool = False) -> str:
+    """Format a tool call for display.
+
+    If markdown_v2=True, escapes text outside code blocks for MarkdownV2.
+    """
+    def esc(s: str) -> str:
+        """Escape text for MarkdownV2 if enabled."""
+        return escape_markdown_v2(s) if markdown_v2 else s
+
     if tool_name == "Bash":
         cmd = tool_input.get("command", "").replace("```", "'''")
         desc = tool_input.get("description", "")
-        desc_line = f"\n\n_{desc}_" if desc else ""
-        return f"Claude is asking permission to run:\n\n```bash\n{cmd}\n```{desc_line}"
+        desc_line = f"\n\n_{esc(desc)}_" if desc else ""
+        return f"{esc('Claude is asking permission to run:')}\n\n```bash\n{cmd}\n```{desc_line}"
 
     elif tool_name == "Edit":
         fp = strip_home(tool_input.get("file_path", ""))
@@ -75,31 +119,31 @@ def format_tool_permission(tool_name: str, tool_input: dict) -> str:
             )
         )
         diff = diff.replace("```", "'''")
-        return f"Claude is asking permission to edit `{fp}`:\n\n```diff\n{diff}\n```"
+        return f"{esc('Claude is asking permission to edit')} `{esc(fp)}`{esc(':')}\n\n```diff\n{diff}\n```"
 
     elif tool_name == "Write":
         fp = strip_home(tool_input.get("file_path", ""))
         content = tool_input.get("content", "").replace("```", "'''")
-        return f"Claude is asking permission to write `{fp}`:\n\n```\n{content}\n```"
+        return f"{esc('Claude is asking permission to write')} `{esc(fp)}`{esc(':')}\n\n```\n{content}\n```"
 
     elif tool_name == "Read":
         fp = strip_home(tool_input.get("file_path", ""))
-        return f"Claude is asking permission to read `{fp}`"
+        return f"{esc('Claude is asking permission to read')} `{esc(fp)}`"
 
     elif tool_name == "AskUserQuestion":
         questions = tool_input.get("questions", [])
-        lines = ["Claude is asking:\n"]
+        lines = [f"{esc('Claude is asking:')}\n"]
         for q in questions:
             question_text = q.get('question', '')
-            lines.append(f"*{question_text}*\n")
+            lines.append(f"*{esc(question_text)}*\n")
             for opt in q.get("options", []):
                 label = opt.get('label', '')
-                lines.append(f"• {label}")
+                lines.append(f"{esc('•')} {esc(label)}")
         return "\n".join(lines)
 
     else:
         input_str = json.dumps(tool_input, indent=2).replace("```", "'''")
-        return f"Claude is asking permission to use {tool_name}:\n\n```\n{input_str}\n```"
+        return f"{esc('Claude is asking permission to use')} {esc(tool_name)}{esc(':')}\n\n```\n{input_str}\n```"
 
 
 def pane_exists(pane: str) -> bool:
@@ -111,9 +155,13 @@ def pane_exists(pane: str) -> bool:
     return result.returncode == 0
 
 
-def send_telegram(bot_token: str, chat_id: str, msg: str, tool_name: str = None, reply_markup: dict = None) -> dict | None:
-    """Send message to Telegram. Returns response JSON on success."""
-    payload = {"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"}
+def send_telegram(bot_token: str, chat_id: str, msg: str, tool_name: str = None, reply_markup: dict = None, parse_mode: str = "Markdown") -> dict | None:
+    """Send message to Telegram. Returns response JSON on success.
+
+    parse_mode: "Markdown", "MarkdownV2", or "HTML"
+    For MarkdownV2, caller must escape text pieces before assembly (use escape_markdown_v2).
+    """
+    payload = {"chat_id": chat_id, "text": msg, "parse_mode": parse_mode}
 
     if reply_markup:
         payload["reply_markup"] = reply_markup

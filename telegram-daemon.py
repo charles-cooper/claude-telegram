@@ -21,8 +21,8 @@ import traceback
 from pathlib import Path
 
 from telegram_utils import (
-    read_state, write_state, pane_exists,
-    escape_markdown, format_tool_permission, strip_home,
+    State, pane_exists,
+    format_tool_permission, strip_home, escape_markdown_v2,
     send_telegram, log, update_message_buttons, delete_message,
     register_bot_commands
 )
@@ -72,32 +72,39 @@ def check_tmux():
         raise TmuxNotAvailable("tmux not available or no sessions running")
 
 
-def cleanup_dead_panes(state: dict) -> dict:
+def cleanup_dead_panes(state: State):
     """Remove entries for panes that no longer exist."""
-    live = {}
+    dead = []
     for msg_id, entry in state.items():
         pane = entry.get("pane")
-        if pane and pane_exists(pane):
-            live[msg_id] = entry
-    return live
+        if not pane or not pane_exists(pane):
+            dead.append(msg_id)
+    for msg_id in dead:
+        state.remove(msg_id)
+    return len(dead)
 
 
-def expire_old_buttons(bot_token: str, chat_id: str, pane: str, state: dict) -> bool:
-    """Expire buttons for old messages on this pane (if newer exists). Returns True if any expired."""
-    # Find the latest unhandled message for this pane
-    pane_msgs = [(int(mid), e) for mid, e in state.items()
-                 if e.get("pane") == pane and not e.get("handled")]
-    if len(pane_msgs) <= 1:
-        return False  # Nothing to expire
+def expire_old_buttons(bot_token: str, chat_id: str, pane: str, state: State, transcript_mgr):
+    """Expire buttons for old messages on this pane if their tool_use has a result.
 
-    latest = max(mid for mid, _ in pane_msgs)
-    changed = False
-    for msg_id, entry in pane_msgs:
-        if msg_id < latest:
-            update_message_buttons(bot_token, chat_id, msg_id, "⏰ Expired")
-            entry["handled"] = True
-            changed = True
-    return changed
+    Only expires if the tool was already handled (has tool_result in transcript).
+    This avoids expiring legitimately pending prompts when Claude queues multiple tool_uses.
+    """
+    for msg_id, entry in list(state.items()):
+        if entry.get("pane") != pane or entry.get("handled"):
+            continue
+        if entry.get("type") != "permission_prompt":
+            continue
+        tool_use_id = entry.get("tool_use_id")
+        transcript_path = entry.get("transcript_path")
+        if not tool_use_id or not transcript_path:
+            continue
+        # Check if this tool has a result in transcript
+        if transcript_path in transcript_mgr.watchers:
+            watcher = transcript_mgr.watchers[transcript_path]
+            if tool_use_id in watcher.tool_results:
+                update_message_buttons(bot_token, chat_id, int(msg_id), "⏰ Expired")
+                state.update(msg_id, handled=True)
 
 
 # If tool_result arrives within this time, delete notification (quick response)
@@ -108,32 +115,29 @@ QUICK_RESPONSE_THRESHOLD = 4.0  # seconds
 IDLE_SUPERSESSION_THRESHOLD = 4.0  # seconds
 
 
-def handle_superseded_idle(bot_token: str, chat_id: str, state: dict, transcript_mgr) -> list[str]:
-    """Handle idle notifications that got superseded by tool_use. Returns msg_ids to remove from state.
+def handle_superseded_idle(state: State, transcript_mgr):
+    """Mark idle notifications that got superseded by tool_use.
 
-    Note: We don't delete the Telegram message - the text before tool_use is still useful context.
-    We just clean up state so we don't track stale entries.
+    We keep superseded messages in state so users can still reply to them.
     """
-    to_remove = []
     for msg_id, entry in list(state.items()):
         if entry.get("type") != "idle":
             continue
+        if entry.get("superseded"):
+            continue  # Already marked
         claude_msg_id = entry.get("claude_msg_id")
         if not claude_msg_id:
             continue
         # Check if this claude message now has tool_use in any watcher
         for watcher in transcript_mgr.watchers.values():
             if claude_msg_id in watcher.tool_use_msg_ids:
-                # Just remove from state, keep the Telegram message visible
-                to_remove.append(msg_id)
-                log(f"Idle superseded by tool_use, keeping message: msg_id={msg_id}")
+                state.update(msg_id, superseded=True)
+                log(f"Idle superseded by tool_use: msg_id={msg_id}")
                 break
-    return to_remove
 
 
-def handle_completed_tools(bot_token: str, chat_id: str, state: dict, transcript_mgr) -> list[str]:
-    """Handle notifications for tools that completed. Delete if quick, expire if slow. Returns msg_ids to remove from state."""
-    to_remove = []
+def handle_completed_tools(bot_token: str, chat_id: str, state: State, transcript_mgr):
+    """Handle notifications for tools that completed. Delete if quick, expire if slow."""
     now = time.time()
     for msg_id, entry in list(state.items()):
         if entry.get("handled"):
@@ -155,52 +159,53 @@ def handle_completed_tools(bot_token: str, chat_id: str, state: dict, transcript
                         log(f"Deleted (quick response {elapsed:.1f}s): msg_id={msg_id}")
                     else:
                         log(f"Failed to delete msg_id={msg_id}")
-                    to_remove.append(msg_id)
+                    state.remove(msg_id)
                 else:
                     # Slow response - mark expired so user can see what happened
                     update_message_buttons(bot_token, chat_id, int(msg_id), "⏰ Expired")
-                    entry["handled"] = True
+                    state.update(msg_id, handled=True)
                     log(f"Expired (slow response {elapsed:.1f}s): msg_id={msg_id}")
-    return to_remove
 
 
 def send_compaction_notification(bot_token: str, chat_id: str, event: CompactionEvent):
     """Send Telegram notification for a compaction event."""
-    project = strip_home(event.cwd)
-    msg = f"`{project}`\n\n🔄 Context compacted ({event.trigger}, {event.pre_tokens:,} tokens)"
-    send_telegram(bot_token, chat_id, msg)
+    project = escape_markdown_v2(strip_home(event.cwd))
+    trigger = escape_markdown_v2(event.trigger)
+    tokens = escape_markdown_v2(f"{event.pre_tokens:,}")
+    msg = f"`{project}`\n\n🔄 Context compacted \\({trigger}, {tokens} tokens\\)"
+    send_telegram(bot_token, chat_id, msg, parse_mode="MarkdownV2")
     log(f"Notified: compaction ({event.trigger})")
 
 
-def send_idle_notification(bot_token: str, chat_id: str, event: IdleEvent, state: dict) -> int | None:
+def send_idle_notification(bot_token: str, chat_id: str, event: IdleEvent, state: State) -> int | None:
     """Send Telegram notification when Claude is waiting for input. Returns message_id."""
-    project = strip_home(event.cwd)
-    # No escaping - let Claude's markdown come through as-is
-    msg = f"`{project}`\n\n💬 {event.text}"
-    result = send_telegram(bot_token, chat_id, msg)
+    project = escape_markdown_v2(strip_home(event.cwd))
+    text = escape_markdown_v2(event.text)
+    msg = f"`{project}`\n\n💬 {text}"
+    result = send_telegram(bot_token, chat_id, msg, parse_mode="MarkdownV2")
     if not result:
         return None
     msg_id = result.get("result", {}).get("message_id")
     if msg_id and event.msg_id:
-        state[str(msg_id)] = {
+        state.add(msg_id, {
             "pane": event.pane,
             "type": "idle",
             "claude_msg_id": event.msg_id,
             "cwd": event.cwd,
             "notified_at": time.time()
-        }
+        })
         log(f"Notified: idle (msg_id={msg_id}, claude_msg_id={event.msg_id[:20]}...)")
     else:
         log(f"Notified: idle")
     return msg_id
 
 
-def send_notification(bot_token: str, chat_id: str, tool: PendingTool, state: dict) -> int | None:
-    """Send Telegram notification for a pending tool. Returns message_id. Updates state in-place."""
-    project = strip_home(tool.cwd)
-    # No escaping for assistant_text - let Claude's markdown come through
-    prefix = f"{tool.assistant_text}\n\n---\n\n" if tool.assistant_text else ""
-    tool_desc = format_tool_permission(tool.tool_name, tool.tool_input)
+def send_notification(bot_token: str, chat_id: str, tool: PendingTool, state: State) -> int | None:
+    """Send Telegram notification for a pending tool. Returns message_id."""
+    project = escape_markdown_v2(strip_home(tool.cwd))
+    assistant_text = escape_markdown_v2(tool.assistant_text) if tool.assistant_text else ""
+    prefix = f"{assistant_text}\n\n\\-\\-\\-\n\n" if assistant_text else ""
+    tool_desc = format_tool_permission(tool.tool_name, tool.tool_input, markdown_v2=True)
     msg = f"`{project}`\n\n{prefix}{tool_desc}"
 
     reply_markup = {
@@ -210,13 +215,13 @@ def send_notification(bot_token: str, chat_id: str, tool: PendingTool, state: di
         ]]
     }
 
-    result = send_telegram(bot_token, chat_id, msg, tool.tool_name, reply_markup)
+    result = send_telegram(bot_token, chat_id, msg, tool.tool_name, reply_markup, parse_mode="MarkdownV2")
     if not result:
         return None
 
     msg_id = result.get("result", {}).get("message_id")
     if msg_id:
-        state[str(msg_id)] = {
+        state.add(msg_id, {
             "pane": tool.pane,
             "type": "permission_prompt",
             "transcript_path": tool.transcript_path,
@@ -224,7 +229,7 @@ def send_notification(bot_token: str, chat_id: str, tool: PendingTool, state: di
             "tool_name": tool.tool_name,
             "cwd": tool.cwd,
             "notified_at": time.time()
-        }
+        })
         log(f"Notified: {tool.tool_name} (msg_id={msg_id}, tool_id={tool.tool_id[:20]}...)")
 
     return msg_id
@@ -241,8 +246,9 @@ def main():
     register_bot_commands(bot_token)
 
     # Initialize components
+    state = State()
     transcript_mgr = TranscriptManager()
-    telegram_poller = TelegramPoller(bot_token, chat_id, timeout=30)
+    telegram_poller = TelegramPoller(bot_token, chat_id, state, timeout=30)
     update_queue = queue.Queue()
 
     def telegram_poll_thread():
@@ -260,8 +266,7 @@ def main():
     telegram_thread.start()
 
     # Bootstrap from state and discover transcripts
-    state = read_state()
-    transcript_mgr.add_from_state(state)
+    transcript_mgr.add_from_state(state.data)
     transcript_mgr.discover_transcripts()
 
     last_cleanup = time.time()
@@ -272,7 +277,6 @@ def main():
     while True:
         try:
             now = time.time()
-            state_changed = False
 
             # Periodic discovery of new transcripts (every 30 seconds)
             if now - last_discover > 30:
@@ -282,47 +286,31 @@ def main():
             # Check transcripts for new tool_use, compactions, and idle events
             pending_tools, compactions, idle_events = transcript_mgr.check_all()
             for tool in pending_tools:
-                if send_notification(bot_token, chat_id, tool, state):
-                    state_changed = True
+                send_notification(bot_token, chat_id, tool, state)
             for event in compactions:
                 send_compaction_notification(bot_token, chat_id, event)
             for event in idle_events:
-                if send_idle_notification(bot_token, chat_id, event, state):
-                    state_changed = True
+                send_idle_notification(bot_token, chat_id, event, state)
 
             # Process any Telegram updates from background thread
             while not update_queue.empty():
-                telegram_poller.process_updates(update_queue.get_nowait(), state)
-                state_changed = True  # Assume updates may have changed state
+                telegram_poller.process_updates(update_queue.get_nowait())
 
-            # Handle completed tools (delete quick, expire slow), expire old messages
-            to_remove = handle_completed_tools(bot_token, chat_id, state, transcript_mgr)
-            for msg_id in to_remove:
-                del state[msg_id]
-                state_changed = True
+            # Handle completed tools (delete quick, expire slow)
+            handle_completed_tools(bot_token, chat_id, state, transcript_mgr)
 
-            # Handle superseded idle notifications
-            to_remove = handle_superseded_idle(bot_token, chat_id, state, transcript_mgr)
-            for msg_id in to_remove:
-                del state[msg_id]
-                state_changed = True
+            # Handle superseded idle notifications (mark, don't remove)
+            handle_superseded_idle(state, transcript_mgr)
             for pane in transcript_mgr.pane_to_transcript:
-                if expire_old_buttons(bot_token, chat_id, pane, state):
-                    state_changed = True
+                expire_old_buttons(bot_token, chat_id, pane, state, transcript_mgr)
 
             # Periodic cleanup (every 5 minutes)
             if now - last_cleanup > CLEANUP_INTERVAL:
-                cleaned = cleanup_dead_panes(state)
-                if len(cleaned) != len(state):
-                    log(f"Cleaned {len(state) - len(cleaned)} dead entries")
-                    state = cleaned
-                    state_changed = True
-
+                removed = cleanup_dead_panes(state)
+                if removed:
+                    log(f"Cleaned {removed} dead entries")
                 transcript_mgr.cleanup_dead()
                 last_cleanup = now
-
-            if state_changed:
-                write_state(state)
 
             time.sleep(0.1)
 

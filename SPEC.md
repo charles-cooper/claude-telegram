@@ -107,11 +107,25 @@ Permission prompts get three buttons:
 | Other | JSON of input |
 
 ### Markdown Handling
-For parse_mode="Markdown" (not MarkdownV2):
-- Claude's text output (idle, assistant_text) passed through unmodified
-- Code block content: replace ``` with ''' to avoid breaking message structure
-- `_` and `*` can be escaped with backslash in plain text if needed
-- `[` `]` don't need escaping (only form links when followed by `(url)`)
+All messages use MarkdownV2 for consistency. Escaping approach:
+- Text outside code blocks: escape all special chars (`\_*[]()~\`>#+-=|{}.!`)
+- Code blocks (```...```): preserve as-is, only replace ``` with ''' inside
+- Inline code (`...`): preserve as-is
+
+`escape_markdown_v2()` escapes all special chars for plain text.
+`format_tool_permission()` accepts `markdown_v2=True` to escape text pieces before assembly.
+
+### State Flushing
+State is written to disk immediately after every modification:
+- After sending notifications (idle, permission, compaction)
+- After handling callbacks (button clicks)
+- After marking messages as handled/superseded
+
+### Superseded Idle Messages
+When an idle notification gets superseded by tool_use:
+- Message stays in state (marked `superseded: true`)
+- Users can still reply to superseded messages
+- State is preserved for debugging
 
 ## Telegram Polling
 
