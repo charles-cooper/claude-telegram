@@ -3,12 +3,15 @@
 import subprocess
 import time
 
+from pathlib import Path
+
 from telegram_utils import log
 from registry import get_config
 
 # Short prefix to avoid collisions with user sessions
 SESSION_PREFIX = "ca-"  # claude-army
 OPERATOR_SESSION = f"{SESSION_PREFIX}op"
+OPERATOR_DIR = Path(__file__).parent / "operator"
 
 
 def session_exists(session_name: str = OPERATOR_SESSION) -> bool:
@@ -44,9 +47,12 @@ def start_operator_session() -> str | None:
 
     log("Starting Operator Claude session...")
 
-    # Create new detached tmux session
+    # Ensure operator directory exists
+    OPERATOR_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Create new detached tmux session in operator directory
     result = subprocess.run(
-        ["tmux", "new-session", "-d", "-s", OPERATOR_SESSION],
+        ["tmux", "new-session", "-d", "-s", OPERATOR_SESSION, "-c", str(OPERATOR_DIR)],
         capture_output=True, text=True
     )
     if result.returncode != 0:
@@ -60,9 +66,8 @@ def start_operator_session() -> str | None:
         log("Failed to get pane ID")
         return None
 
-    # Start Claude with operator context
-    # Using --resume so it picks up any existing conversation
-    subprocess.run(["tmux", "send-keys", "-t", pane, "claude --resume", "Enter"])
+    # Start Claude - try resume, fall back to fresh if no conversation exists
+    subprocess.run(["tmux", "send-keys", "-t", pane, "claude --resume || claude", "Enter"])
 
     config = get_config()
     config.operator_pane = pane

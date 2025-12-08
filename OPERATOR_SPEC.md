@@ -58,11 +58,12 @@ Manage multiple Claude instances, each working on a separate task/feature/PR in 
 ## Directory Structure
 
 ```
-~/claude-army/                    # Operator Claude's home
-  telegram-daemon.py
-  operator/                       # Gitignored - operator state
+~/claude-army/                    # Project root (daemon runs here)
+  telegram-daemon.py              # Daemon process
+  operator/                       # Operator Claude's working directory (gitignored)
     registry.json                 # Cache (rebuildable)
     config.json                   # Group ID, topic IDs, etc.
+    .claude/                      # Operator's Claude state (conversations, settings)
   ...
 
 ~/projects/myrepo/                # User's repository
@@ -254,10 +255,20 @@ Workers: ca-{task_name}
 The `ca-` prefix (claude-army) avoids collisions with user sessions.
 Task names must be unique across all repos.
 
+### Session Working Directories
+
+Each Claude session runs in its own directory for conversation isolation:
+- **Daemon**: Runs from wherever invoked
+- **Operator**: `<claude-army-dir>/operator/` (script-relative, not pwd-relative)
+- **Workers**: `<worktree_path>`
+
+Script-relative paths ensure the operator directory is always consistent regardless of where the daemon is invoked from. Each directory has its own `.claude/` conversation state.
+
 ### Claude Startup
 
-- New task: `claude "Add dark mode support"`
-- Resume after death: `claude --resume`
+- **Operator**: `claude --resume || claude` (fall back to fresh if no conversation)
+- **New worker task**: `claude "<task description>"`
+- **Worker resume after death**: `claude --resume || claude "<task description>"` (description stored in marker file)
 
 ## Daemon Changes
 

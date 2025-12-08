@@ -288,27 +288,51 @@ class TelegramPoller:
         msg_id = msg.get("message_id")
         chat_id = str(msg.get("chat", {}).get("id"))
         topic_id = msg.get("message_thread_id")
+        text = msg.get("text", "")
         log(f"Message: msg_id={msg_id} topic={topic_id}")
 
-        if chat_id != self.chat_id:
-            log(f"  Skipping: wrong chat")
-            return
-
         reply_to = msg.get("reply_to_message", {}).get("message_id")
-        text = msg.get("text", "")
         log(f"  reply_to={reply_to} text={text[:30] if text else None}")
 
-        # Handle bot commands (/debug, /todo, etc.)
-        if self.command_handler.handle_command(msg):
-            return
+        # Handle bot commands from any chat (handlers do their own validation)
+        if text.startswith("/"):
+            if self.command_handler.handle_command(msg):
+                return
 
-        # Route General topic messages to operator
         config = get_config()
-        if config.is_configured() and topic_id == config.general_topic_id:
+        chat_type = msg.get("chat", {}).get("type")
+
+        # Route DMs to operator (same as General topic)
+        if chat_type == "private":
+            if not config.is_configured():
+                send_reply(self.bot_token, chat_id, msg_id,
+                    "Claude Army not set up. Use /setup in a group to configure.")
+                return
             if text:
                 formatted = self._format_incoming_message(msg)
                 if send_to_operator(formatted):
-                    react_to_message(self.bot_token, self.chat_id, msg_id)
+                    react_to_message(self.bot_token, chat_id, msg_id)
+                    log(f"  Routed DM to operator")
+                else:
+                    send_reply(self.bot_token, chat_id, msg_id,
+                        "Failed to reach operator. Check: tmux has-session -t ca-op")
+                    log(f"  Failed to route DM to operator")
+            return
+
+        # For group messages, check chat is configured group or fallback chat_id
+        expected_chat = str(config.group_id) if config.is_configured() else self.chat_id
+        if chat_id != expected_chat:
+            log(f"  Skipping: wrong chat")
+            return
+
+        # Route General topic messages to operator
+        # In forums, General topic may have topic_id=None or topic_id=1
+        is_general = topic_id is None or topic_id == config.general_topic_id
+        if config.is_configured() and is_general:
+            if text:
+                formatted = self._format_incoming_message(msg)
+                if send_to_operator(formatted):
+                    react_to_message(self.bot_token, chat_id, msg_id)
                     log(f"  Routed to operator")
                 else:
                     log(f"  Failed to route to operator")

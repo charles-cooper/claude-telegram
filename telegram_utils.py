@@ -5,9 +5,15 @@ import difflib
 import json
 import os
 import requests
+import shlex
 import subprocess
 import threading
 from pathlib import Path
+
+
+def shell_quote(s: str) -> str:
+    """Quote a string for safe shell use."""
+    return shlex.quote(s)
 
 _log_lock = threading.Lock()
 

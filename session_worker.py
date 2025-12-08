@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from telegram_utils import log, edit_forum_topic
+from telegram_utils import log, edit_forum_topic, shell_quote
 from registry import (
     get_config, get_registry, write_marker_file, read_marker_file,
     get_marker_path, MARKER_FILE_NAME
@@ -242,7 +242,7 @@ def start_worker_session(repo_path: str, task_name: str, description: str, topic
     })
 
     # Start Claude with the task description
-    subprocess.run(["tmux", "send-keys", "-t", pane, f'claude "{description}"', "Enter"])
+    subprocess.run(["tmux", "send-keys", "-t", pane, f"claude {shell_quote(description)}", "Enter"])
 
     log(f"Worker session started: {pane}")
     return pane
@@ -327,7 +327,9 @@ def resume_worker(repo_path: str, task_name: str) -> str | None:
     pane = get_pane_id(session_name)
 
     if pane:
-        subprocess.run(["tmux", "send-keys", "-t", pane, "claude --resume", "Enter"])
+        # Try resume, fall back to fresh start with description if no conversation exists
+        description = marker.get("description", task_name)
+        subprocess.run(["tmux", "send-keys", "-t", pane, f"claude --resume || claude {shell_quote(description)}", "Enter"])
 
         # Update registry
         registry = get_registry()
