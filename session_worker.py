@@ -96,19 +96,9 @@ def _start_claude(pane: str, description: str, resume: bool = False):
 
 def update_topic_status(topic_id: int, task_name: str, status: str):
     """Update topic name to reflect task status."""
-    config = get_config()
-    if not config.is_configured():
-        return
-
-    prefix = STATUS_PREFIXES.get(status, "")
-    new_name = f"{prefix} {task_name}".strip()
-
-    try:
-        bot_token = _get_bot_token()
-        edit_forum_topic(bot_token, str(config.group_id), topic_id, new_name)
-        log(f"Updated topic name: {new_name}")
-    except Exception as e:
-        log(f"Failed to update topic name: {e}")
+    # No status prefixes for now - topic name stays as task_name
+    # TODO: Could add status suffix like "(paused)" if desired
+    pass
 
 
 # ============ Worktree Operations ============
