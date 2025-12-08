@@ -238,7 +238,10 @@ def register_bot_commands(bot_token: str):
     """Register bot commands with Telegram. Raises on failure."""
     commands = [
         {"command": "debug", "description": "Debug a message (reply to it)"},
-        {"command": "todo", "description": "Add a todo item for Claude"}
+        {"command": "todo", "description": "Add a todo item for Claude"},
+        {"command": "setup", "description": "Initialize this group as Claude Army control center"},
+        {"command": "reset", "description": "Remove Claude Army configuration"},
+        {"command": "help", "description": "Show available commands"}
     ]
     resp = requests.post(
         f"https://api.telegram.org/bot{bot_token}/setMyCommands",
@@ -246,3 +249,129 @@ def register_bot_commands(bot_token: str):
     )
     resp.raise_for_status()
     log("Registered bot commands")
+
+
+# ============ Forum API Functions ============
+
+def get_chat(bot_token: str, chat_id: str) -> dict | None:
+    """Get chat info. Returns None on error."""
+    resp = requests.post(
+        f"https://api.telegram.org/bot{bot_token}/getChat",
+        json={"chat_id": chat_id}
+    )
+    if not resp.ok:
+        return None
+    return resp.json().get("result")
+
+
+def is_forum_enabled(bot_token: str, chat_id: str) -> bool:
+    """Check if chat is a forum (supergroup with topics enabled)."""
+    chat = get_chat(bot_token, chat_id)
+    if not chat:
+        return False
+    return chat.get("is_forum", False)
+
+
+def create_forum_topic(bot_token: str, chat_id: str, name: str, icon_color: int = None) -> dict | None:
+    """Create a forum topic. Returns topic info on success, None on error.
+
+    icon_color options: 0x6FB9F0 (blue), 0xFFD67E (yellow), 0xCB86DB (purple),
+                        0x8EEE98 (green), 0xFF93B2 (pink), 0xFB6F5F (red)
+    """
+    payload = {"chat_id": chat_id, "name": name}
+    if icon_color:
+        payload["icon_color"] = icon_color
+
+    resp = requests.post(
+        f"https://api.telegram.org/bot{bot_token}/createForumTopic",
+        json=payload
+    )
+    if not resp.ok:
+        log(f"Failed to create topic '{name}': {resp.text}")
+        return None
+    return resp.json().get("result")
+
+
+def close_forum_topic(bot_token: str, chat_id: str, topic_id: int) -> bool:
+    """Close a forum topic. Returns True on success."""
+    resp = requests.post(
+        f"https://api.telegram.org/bot{bot_token}/closeForumTopic",
+        json={"chat_id": chat_id, "message_thread_id": topic_id}
+    )
+    return resp.ok
+
+
+def reopen_forum_topic(bot_token: str, chat_id: str, topic_id: int) -> bool:
+    """Reopen a closed forum topic. Returns True on success."""
+    resp = requests.post(
+        f"https://api.telegram.org/bot{bot_token}/reopenForumTopic",
+        json={"chat_id": chat_id, "message_thread_id": topic_id}
+    )
+    return resp.ok
+
+
+def edit_forum_topic(bot_token: str, chat_id: str, topic_id: int, name: str = None) -> bool:
+    """Edit a forum topic name. Returns True on success."""
+    payload = {"chat_id": chat_id, "message_thread_id": topic_id}
+    if name:
+        payload["name"] = name
+    resp = requests.post(
+        f"https://api.telegram.org/bot{bot_token}/editForumTopic",
+        json=payload
+    )
+    return resp.ok
+
+
+def send_to_topic(bot_token: str, chat_id: str, topic_id: int, text: str,
+                  reply_markup: dict = None, parse_mode: str = "MarkdownV2") -> dict | None:
+    """Send message to a specific forum topic. Returns response JSON on success."""
+    payload = {
+        "chat_id": chat_id,
+        "message_thread_id": topic_id,
+        "text": text,
+        "parse_mode": parse_mode
+    }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+
+    resp = requests.post(
+        f"https://api.telegram.org/bot{bot_token}/sendMessage",
+        json=payload
+    )
+
+    # If markdown parsing fails, retry without parse_mode
+    if resp.status_code == 400 and "can't parse entities" in resp.text:
+        del payload["parse_mode"]
+        resp = requests.post(
+            f"https://api.telegram.org/bot{bot_token}/sendMessage",
+            json=payload
+        )
+
+    if not resp.ok:
+        log(f"Failed to send to topic {topic_id}: {resp.text}")
+        return None
+    return resp.json()
+
+
+def pin_message(bot_token: str, chat_id: str, msg_id: int, disable_notification: bool = True) -> bool:
+    """Pin a message in a chat. Returns True on success."""
+    resp = requests.post(
+        f"https://api.telegram.org/bot{bot_token}/pinChatMessage",
+        json={
+            "chat_id": chat_id,
+            "message_id": msg_id,
+            "disable_notification": disable_notification
+        }
+    )
+    return resp.ok
+
+
+def get_chat_administrators(bot_token: str, chat_id: str) -> list | None:
+    """Get list of chat administrators. Returns None on error."""
+    resp = requests.post(
+        f"https://api.telegram.org/bot{bot_token}/getChatAdministrators",
+        json={"chat_id": chat_id}
+    )
+    if not resp.ok:
+        return None
+    return resp.json().get("result", [])
