@@ -1,16 +1,45 @@
 """Worker Claude session management."""
 
 import json
+import os
 import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from telegram_utils import log
+from telegram_utils import log, edit_forum_topic
 from registry import (
     get_config, get_registry, write_marker_file, read_marker_file,
     get_marker_path, MARKER_FILE_NAME
 )
+
+# Status prefixes for topic names
+STATUS_PREFIXES = {
+    "active": "▶️",
+    "paused": "⏸️",
+    "done": "✅",
+}
+
+
+def update_topic_status(topic_id: int, task_name: str, status: str):
+    """Update topic name to reflect task status."""
+    config = get_config()
+    if not config.is_configured():
+        return
+
+    prefix = STATUS_PREFIXES.get(status, "")
+    new_name = f"{prefix} {task_name}".strip()
+
+    # Get bot token from telegram config
+    try:
+        import json
+        from pathlib import Path
+        tg_config = json.loads((Path.home() / "telegram.json").read_text())
+        bot_token = tg_config["bot_token"]
+        edit_forum_topic(bot_token, str(config.group_id), topic_id, new_name)
+        log(f"Updated topic name: {new_name}")
+    except Exception as e:
+        log(f"Failed to update topic name: {e}")
 
 
 def get_worktree_path(repo_path: str, task_name: str) -> Path:
@@ -19,6 +48,40 @@ def get_worktree_path(repo_path: str, task_name: str) -> Path:
     repo_data = registry.repos.get(repo_path, {})
     base = repo_data.get("worktree_base", "trees")
     return Path(repo_path) / base / task_name
+
+
+SETUP_HOOK_NAME = ".claude-army-setup.sh"
+
+
+def run_setup_hook(repo_path: str, task_name: str, worktree_path: Path) -> bool:
+    """Run post-worktree setup hook if it exists. Returns True if ran successfully."""
+    hook_path = Path(repo_path) / SETUP_HOOK_NAME
+    if not hook_path.exists():
+        return True  # No hook is fine
+
+    log(f"Running setup hook: {hook_path}")
+    env = {
+        **os.environ,
+        "TASK_NAME": task_name,
+        "REPO_PATH": repo_path,
+        "WORKTREE_PATH": str(worktree_path)
+    }
+
+    result = subprocess.run(
+        ["bash", str(hook_path)],
+        cwd=str(worktree_path),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60
+    )
+
+    if result.returncode != 0:
+        log(f"Setup hook failed: {result.stderr}")
+        return False
+
+    log(f"Setup hook completed")
+    return True
 
 
 def create_worktree(repo_path: str, task_name: str, branch: str = None) -> Path | None:
@@ -46,6 +109,10 @@ def create_worktree(repo_path: str, task_name: str, branch: str = None) -> Path 
             return None
 
     log(f"Created worktree: {worktree_path}")
+
+    # Run setup hook
+    run_setup_hook(repo_path, task_name, worktree_path)
+
     return worktree_path
 
 
@@ -182,6 +249,8 @@ def pause_worker(repo_path: str, task_name: str) -> bool:
     if not marker:
         return False
 
+    topic_id = marker.get("topic_id")
+
     # Stop session
     stop_worker_session(repo_path, task_name)
 
@@ -196,6 +265,10 @@ def pause_worker(repo_path: str, task_name: str) -> bool:
         task_data["status"] = "paused"
         registry.add_task(repo_path, task_name, task_data)
 
+    # Update topic name
+    if topic_id:
+        update_topic_status(topic_id, task_name, "paused")
+
     log(f"Worker paused: {task_name}")
     return True
 
@@ -209,7 +282,6 @@ def resume_worker(repo_path: str, task_name: str) -> str | None:
         return None
 
     topic_id = marker.get("topic_id")
-    description = marker.get("description", "Resume previous task")
 
     # Update marker
     marker["status"] = "active"
@@ -240,9 +312,39 @@ def resume_worker(repo_path: str, task_name: str) -> str | None:
             "status": "active"
         })
 
+        # Update topic name
+        if topic_id:
+            update_topic_status(topic_id, task_name, "active")
+
         log(f"Worker resumed: {pane}")
 
     return pane
+
+
+def cleanup_task(repo_path: str, task_name: str, delete_worktree_flag: bool = True) -> bool:
+    """Clean up a completed task. Stops session, marks done, optionally deletes worktree."""
+    worktree_path = get_worktree_path(repo_path, task_name)
+    marker = read_marker_file(str(worktree_path))
+
+    topic_id = marker.get("topic_id") if marker else None
+
+    # Stop session
+    stop_worker_session(repo_path, task_name)
+
+    # Update topic name
+    if topic_id:
+        update_topic_status(topic_id, task_name, "done")
+
+    # Remove from registry
+    registry = get_registry()
+    registry.remove_task(repo_path, task_name)
+
+    # Delete worktree if requested
+    if delete_worktree_flag:
+        delete_worktree(repo_path, task_name)
+
+    log(f"Task cleaned up: {task_name}")
+    return True
 
 
 def get_worker_pane_for_topic(topic_id: int) -> str | None:

@@ -237,11 +237,13 @@ def react_to_message(bot_token: str, chat_id: str, msg_id: int, emoji: str = "ðŸ
 def register_bot_commands(bot_token: str):
     """Register bot commands with Telegram. Raises on failure."""
     commands = [
+        {"command": "setup", "description": "Initialize this group as control center"},
+        {"command": "reset", "description": "Remove configuration"},
+        {"command": "status", "description": "Show all tasks and status"},
+        {"command": "recover", "description": "Rebuild registry from marker files"},
+        {"command": "help", "description": "Show available commands"},
+        {"command": "todo", "description": "Add todo to Operator queue"},
         {"command": "debug", "description": "Debug a message (reply to it)"},
-        {"command": "todo", "description": "Add a todo item for Claude"},
-        {"command": "setup", "description": "Initialize this group as Claude Army control center"},
-        {"command": "reset", "description": "Remove Claude Army configuration"},
-        {"command": "help", "description": "Show available commands"}
     ]
     resp = requests.post(
         f"https://api.telegram.org/bot{bot_token}/setMyCommands",

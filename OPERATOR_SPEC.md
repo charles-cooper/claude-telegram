@@ -89,6 +89,24 @@ Manage multiple Claude instances, each working on a separate task/feature/PR in 
 }
 ```
 
+### Post-Worktree Setup Hook
+
+If a repo contains `.claude-army-setup.sh` (in repo root), it runs after worktree creation:
+
+```bash
+#!/bin/bash
+# .claude-army-setup.sh - runs in new worktree directory
+# Example: create symlinks, copy .env, etc.
+
+ln -sf ~/shared/.env .env
+ln -sf ../main/node_modules node_modules
+```
+
+The script receives environment variables:
+- `TASK_NAME` - name of the task
+- `REPO_PATH` - path to main repo
+- `WORKTREE_PATH` - path to new worktree
+
 ### Registry Cache Format
 
 ```json
@@ -155,6 +173,7 @@ Each task topic has a pinned message:
 - Manages tasks (spawn, status, cleanup)
 - **Manages todo queue** - receives todos from any topic, decides routing/priority
 - **Updates AGENTS.md** - observes repeated difficulties across workers, updates project AGENTS.md with learnings
+- **Spawn assistance** - learns from previous spawns, asks clarifying questions if task seems ambiguous, enriches initial prompts with context from past worker struggles
 - Goes through permission prompts for actions
 
 ### Example Interactions

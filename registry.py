@@ -227,6 +227,46 @@ def scan_for_marker_files(search_paths: list[str] = None) -> list[dict]:
     return markers
 
 
+# ============ Registry Recovery ============
+
+def rebuild_registry_from_markers(search_paths: list[str] = None) -> int:
+    """Rebuild registry by scanning for marker files.
+
+    Returns number of tasks recovered.
+    """
+    from telegram_utils import log
+
+    markers = scan_for_marker_files(search_paths)
+    registry = get_registry()
+    recovered = 0
+
+    for marker in markers:
+        repo_path = marker.get("repo")
+        task_name = marker.get("task_name")
+        topic_id = marker.get("topic_id")
+        status = marker.get("status", "active")
+        worktree_path = marker.get("worktree_path")
+
+        if not repo_path or not task_name:
+            continue
+
+        # Check if already in registry
+        existing = registry.get_task(repo_path, task_name)
+        if existing:
+            continue
+
+        # Add to registry
+        registry.add_task(repo_path, task_name, {
+            "topic_id": topic_id,
+            "status": status,
+            "worktree_path": worktree_path
+        })
+        recovered += 1
+        log(f"Recovered task: {task_name} in {repo_path}")
+
+    return recovered
+
+
 # ============ Singleton instances ============
 
 _config = None
@@ -247,3 +287,10 @@ def get_registry() -> Registry:
     if _registry is None:
         _registry = Registry()
     return _registry
+
+
+def reset_singletons():
+    """Reset singletons (for testing or after recovery)."""
+    global _config, _registry
+    _config = None
+    _registry = None

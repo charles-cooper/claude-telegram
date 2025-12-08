@@ -8,7 +8,7 @@ from telegram_utils import (
     State, pane_exists, send_reply, react_to_message, log,
     is_forum_enabled
 )
-from registry import get_config
+from registry import get_config, get_registry, rebuild_registry_from_markers
 from session_operator import (
     start_operator_session, stop_operator_session, send_to_operator
 )
@@ -81,6 +81,16 @@ class CommandHandler:
         # /help - show commands
         if text_lower.startswith("/help"):
             self._handle_help(msg_id)
+            return True
+
+        # /status - show task status
+        if text_lower.startswith("/status"):
+            self._handle_status(msg_id)
+            return True
+
+        # /recover - rebuild registry from marker files
+        if text_lower.startswith("/recover"):
+            self._handle_recover(msg_id)
             return True
 
         return False
@@ -226,6 +236,45 @@ class CommandHandler:
             "You can run /setup in any group to reconfigure.")
         log(f"  Reset complete for group {chat_id}")
 
+    def _handle_status(self, msg_id: int):
+        """Handle /status - show all tasks and their status."""
+        config = get_config()
+        registry = get_registry()
+
+        if not config.is_configured():
+            self._reply(msg_id, "Claude Army not configured. Run /setup first.")
+            return
+
+        tasks = registry.get_all_tasks()
+        if not tasks:
+            self._reply(msg_id, "No active tasks.")
+            return
+
+        lines = ["*Task Status*\n"]
+        for repo_path, task_name, task_data in tasks:
+            status = task_data.get("status", "unknown")
+            topic_id = task_data.get("topic_id", "?")
+            emoji = "▶️" if status == "active" else "⏸️" if status == "paused" else "❓"
+            lines.append(f"{emoji} `{task_name}` ({status}) - topic {topic_id}")
+
+        self._reply(msg_id, "\n".join(lines))
+
+    def _handle_recover(self, msg_id: int):
+        """Handle /recover - rebuild registry from marker files."""
+        config = get_config()
+
+        if not config.is_configured():
+            self._reply(msg_id, "Claude Army not configured. Run /setup first.")
+            return
+
+        self._reply(msg_id, "Scanning for marker files...")
+        recovered = rebuild_registry_from_markers()
+
+        if recovered > 0:
+            self._reply(msg_id, f"Recovered {recovered} task(s). Run /status to see them.")
+        else:
+            self._reply(msg_id, "No new tasks found.")
+
     def _handle_help(self, msg_id: int):
         """Handle /help - show available commands."""
         config = get_config()
@@ -234,6 +283,8 @@ class CommandHandler:
 
 /setup - Initialize this group as control center
 /reset - Remove Claude Army configuration
+/status - Show all tasks and status
+/recover - Rebuild registry from marker files
 /help - Show this help message
 /todo <item> - Add todo to Operator queue
 /debug - Debug a message (reply to it)
