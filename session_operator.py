@@ -88,27 +88,20 @@ def stop_operator_session() -> bool:
 
 
 def send_to_operator(text: str) -> bool:
-    """Send text to the Operator Claude pane."""
+    """Send text to the Operator Claude pane. Lazily resurrects if needed."""
     config = get_config()
-    pane = config.operator_pane
 
-    if not pane:
-        if session_exists():
-            pane = get_pane_id()
-            if pane:
-                config.operator_pane = pane
-
-    if not pane:
-        log("No operator pane configured")
+    if not config.is_configured():
+        log("Operator not configured")
         return False
 
-    # Check pane exists
-    result = subprocess.run(
-        ["tmux", "has-session", "-t", pane.split(":")[0]],
-        capture_output=True
-    )
-    if result.returncode != 0:
-        log(f"Operator pane {pane} not available")
+    # Try to get existing pane, or resurrect
+    pane = config.operator_pane
+    if not pane or not session_exists():
+        pane = check_and_resurrect_operator()
+
+    if not pane:
+        log("Failed to get operator pane")
         return False
 
     try:

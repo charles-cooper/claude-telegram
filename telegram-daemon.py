@@ -29,7 +29,8 @@ from telegram_utils import (
 from transcript_watcher import TranscriptManager, PendingTool, CompactionEvent, IdleEvent
 from telegram_poller import TelegramPoller
 from registry import get_config
-from session_operator import is_operator_pane, check_and_resurrect_operator
+from session_operator import is_operator_pane
+from session_worker import is_worker_pane
 
 CONFIG_FILE = Path.home() / "telegram.json"
 PID_FILE = Path("/tmp/claude-telegram-daemon.pid")
@@ -173,9 +174,21 @@ def send_to_chat_or_topic(bot_token: str, chat_id: str, pane: str, msg: str,
                           reply_markup: dict = None, parse_mode: str = "MarkdownV2") -> dict | None:
     """Send message to appropriate destination based on pane type."""
     config = get_config()
-    if config.is_configured() and is_operator_pane(pane):
+    if not config.is_configured():
+        return send_telegram(bot_token, chat_id, msg, None, reply_markup, parse_mode)
+
+    # Operator pane -> General topic
+    if is_operator_pane(pane):
         return send_to_topic(bot_token, str(config.group_id), config.general_topic_id,
                             msg, reply_markup, parse_mode)
+
+    # Worker pane -> task topic
+    is_worker, topic_id = is_worker_pane(pane)
+    if is_worker and topic_id:
+        return send_to_topic(bot_token, str(config.group_id), topic_id,
+                            msg, reply_markup, parse_mode)
+
+    # Default: send to configured chat
     return send_telegram(bot_token, chat_id, msg, None, reply_markup, parse_mode)
 
 
@@ -256,9 +269,6 @@ def main():
 
     log(f"Starting daemon (PID {os.getpid()})...")
     register_bot_commands(bot_token)
-
-    # Resurrect operator if configured
-    check_and_resurrect_operator()
 
     # Initialize components
     state = State()

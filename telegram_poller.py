@@ -13,6 +13,7 @@ from telegram_utils import (
 from bot_commands import CommandHandler
 from registry import get_config
 from session_operator import send_to_operator
+from session_worker import send_to_worker, get_worker_pane_for_topic
 
 
 def tool_already_handled(transcript_path: str, tool_use_id: str) -> bool:
@@ -254,8 +255,8 @@ class TelegramPoller:
                 answer_callback(self.bot_token, cb_id, "Failed")
                 log(f"  Failed (pane {pane} dead)")
 
-    def _format_message_for_operator(self, msg: dict) -> str:
-        """Format a Telegram message with context for the operator."""
+    def _format_incoming_message(self, msg: dict) -> str:
+        """Format a Telegram message with metadata and reply context."""
         text = msg.get("text", "")
         topic_id = msg.get("message_thread_id")
         msg_id = msg.get("message_id")
@@ -305,12 +306,23 @@ class TelegramPoller:
         config = get_config()
         if config.is_configured() and topic_id == config.general_topic_id:
             if text:
-                formatted = self._format_message_for_operator(msg)
+                formatted = self._format_incoming_message(msg)
                 if send_to_operator(formatted):
                     react_to_message(self.bot_token, self.chat_id, msg_id)
                     log(f"  Routed to operator")
                 else:
                     log(f"  Failed to route to operator")
+            return
+
+        # Route task topic messages to worker
+        if topic_id and get_worker_pane_for_topic(topic_id):
+            if text:
+                formatted = self._format_incoming_message(msg)
+                if send_to_worker(topic_id, formatted):
+                    react_to_message(self.bot_token, self.chat_id, msg_id)
+                    log(f"  Routed to worker for topic {topic_id}")
+                else:
+                    log(f"  Failed to route to worker")
             return
 
         if not reply_to or str(reply_to) not in self.state or not text:
