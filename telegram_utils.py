@@ -355,13 +355,19 @@ def edit_forum_topic(bot_token: str, chat_id: str, topic_id: int, name: str = No
 
 def send_to_topic(bot_token: str, chat_id: str, topic_id: int, text: str,
                   reply_markup: dict = None, parse_mode: str = "MarkdownV2") -> dict | None:
-    """Send message to a specific forum topic. Returns response JSON on success."""
+    """Send message to a specific forum topic. Returns response JSON on success.
+
+    For the General topic (topic_id=1), don't pass message_thread_id as Telegram
+    expects messages to the General topic to be sent without it.
+    """
     payload = {
         "chat_id": chat_id,
-        "message_thread_id": topic_id,
         "text": text,
         "parse_mode": parse_mode
     }
+    # General topic (1) doesn't use message_thread_id
+    if topic_id and topic_id != 1:
+        payload["message_thread_id"] = topic_id
     if reply_markup:
         payload["reply_markup"] = reply_markup
 
