@@ -55,11 +55,6 @@ def get_pending_tool_from_transcript(transcript_path: str) -> str | None:
     return None
 
 
-def send_to_pane(pane: str, text: str) -> bool:
-    """Send text to a tmux pane."""
-    return send_to_tmux_pane(pane, text)
-
-
 def send_text_to_permission_prompt(pane: str, text: str, already_at_input: bool = False) -> bool:
     """Send text reply to a permission prompt.
 
@@ -264,7 +259,7 @@ class TelegramPoller:
                 answer_callback(self.bot_token, cb_id, "No active prompt")
                 log(f"  Ignoring y/n/a: not a permission prompt")
         else:
-            if send_to_pane(pane, cb_data):
+            if send_to_tmux_pane(pane, cb_data):
                 answer_callback(self.bot_token, cb_id, f"Sent: {cb_data}")
                 log(f"  Sent to pane {pane}: {cb_data}")
             else:
@@ -372,7 +367,7 @@ class TelegramPoller:
                 return True
 
             # Send as regular input to pane
-            if send_to_pane(pane, text):
+            if send_to_tmux_pane(pane, text):
                 log(f"  Sent to pane {pane}: {text[:50]}...")
             else:
                 log(f"  Failed (pane {pane} dead)")

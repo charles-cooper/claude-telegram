@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from telegram_utils import log
+
 CLAUDE_ARMY_DIR = Path(__file__).parent / "operator"
 CONFIG_FILE = CLAUDE_ARMY_DIR / "config.json"
 REGISTRY_FILE = CLAUDE_ARMY_DIR / "registry.json"
@@ -260,8 +262,6 @@ def rebuild_registry_from_markers(search_paths: list[str] = None) -> int:
 
     Returns number of tasks recovered.
     """
-    from telegram_utils import log
-
     markers = scan_for_marker_files(search_paths)
     registry = get_registry()
     recovered = 0
