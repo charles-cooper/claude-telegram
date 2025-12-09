@@ -15,7 +15,7 @@ from pathlib import Path
 from telegram_utils import (
     log, edit_forum_topic, create_forum_topic, close_forum_topic,
     shell_quote, TopicCreationError, send_to_tmux_pane, send_to_topic,
-    escape_markdown_v2
+    escape_markdown_v2, pane_exists
 )
 from registry import (
     get_config, get_registry, write_marker_file, read_marker_file,
@@ -561,25 +561,64 @@ def get_worker_pane_for_topic(topic_id: int) -> str | None:
     return None
 
 
+def _find_pane_by_cwd(cwd: str) -> str | None:
+    """Find a tmux pane with the given working directory."""
+    try:
+        result = subprocess.run(
+            ["tmux", "list-panes", "-a", "-F", "#{session_name}:#{window_index}.#{pane_index} #{pane_current_path}"],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            return None
+        for line in result.stdout.strip().split("\n"):
+            if not line:
+                continue
+            parts = line.split(" ", 1)
+            if len(parts) == 2 and parts[1] == cwd:
+                return parts[0]
+    except Exception:
+        pass
+    return None
+
+
 def send_to_worker(topic_id: int, text: str) -> bool:
     """Send text to the worker handling a topic. Resurrects if needed."""
     registry = get_registry()
+    config = get_config()
     result = registry.find_task_by_topic(topic_id)
     if not result:
         log(f"No task for topic {topic_id}")
         return False
 
     task_name, task_data = result
-    session_name = _get_session_name(task_name)
     pane = task_data.get("pane")
+    path = task_data.get("path")
 
-    # Resurrect if needed
-    if not pane or not _session_exists(session_name):
-        if task_data.get("status") == "paused":
-            log(f"Task {task_name} is paused, not resurrecting")
-            return False
-        pane = resume_task(task_name)
+    # Check if stored pane exists
+    if pane and pane_exists(pane):
+        return send_to_tmux_pane(pane, text)
 
+    # Stored pane doesn't exist - try to find by cwd
+    if path:
+        discovered_pane = _find_pane_by_cwd(path)
+        if discovered_pane:
+            log(f"Discovered pane {discovered_pane} for task {task_name} (was {pane})")
+            task_data["pane"] = discovered_pane
+            registry.add_task(task_name, task_data)
+            return send_to_tmux_pane(discovered_pane, text)
+
+    # No existing pane found - need to resurrect
+    if task_data.get("status") == "paused":
+        log(f"Task {task_name} is paused, not resurrecting")
+        return False
+
+    # Notify user that we're recreating the session
+    bot_token = _get_bot_token()
+    if bot_token and config.group_id:
+        send_to_topic(bot_token, str(config.group_id), topic_id,
+                      escape_markdown_v2(f"⚠️ Session not found, recreating {task_name}..."))
+
+    pane = resume_task(task_name)
     if not pane:
         log(f"Failed to get pane for topic {topic_id}")
         return False
