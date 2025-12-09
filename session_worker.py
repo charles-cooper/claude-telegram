@@ -13,13 +13,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from telegram_utils import (
-    log, edit_forum_topic, create_forum_topic, close_forum_topic,
+    log, edit_forum_topic, create_forum_topic, close_forum_topic, delete_forum_topic,
     shell_quote, TopicCreationError, send_to_tmux_pane, send_to_topic,
     escape_markdown_v2, pane_exists
 )
 from registry import (
     get_config, get_registry, write_marker_file, read_marker_file,
-    remove_marker_file, write_marker_file_pending, complete_pending_marker
+    remove_marker_file, write_marker_file_pending
 )
 
 
@@ -108,11 +108,22 @@ def _kill_tmux_session(session_name: str) -> bool:
 
 
 def _start_claude(pane: str, description: str, resume: bool = False):
-    """Start Claude in a pane."""
+    """Start Claude in a pane.
+
+    If resume=False (new task), prompts Claude to summarize and wait for approval.
+    If resume=True, continues existing conversation or falls back to description.
+    """
     if resume:
         cmd = f"claude --continue || claude {shell_quote(description)}"
     else:
-        cmd = f"claude {shell_quote(description)}"
+        confirm_prompt = (
+            f"New task: {description}\n\n"
+            "Please:\n"
+            "1. Summarize what you understand the task to be\n"
+            "2. Outline your planned approach\n"
+            "3. Wait for user confirmation before starting work"
+        )
+        cmd = f"claude {shell_quote(confirm_prompt)}"
     subprocess.run(["tmux", "send-keys", "-t", pane, cmd, "Enter"])
 
 
@@ -121,6 +132,53 @@ def update_topic_status(topic_id: int, task_name: str, status: str):
     # No status prefixes for now - topic name stays as task_name
     # TODO: Could add status suffix like "(paused)" if desired
     pass
+
+
+def _create_task_topic_safely(
+    directory: str,
+    task_name: str,
+    task_type: str,
+    description: str,
+    welcome_message: str,
+    repo: str = None
+) -> int:
+    """Create Telegram topic with crash-safe marker pattern.
+
+    Steps:
+    1. Write pending marker (so recovery knows topic creation is in progress)
+    2. Create Telegram topic
+    3. Send welcome message to topic
+    4. Complete marker with full metadata
+
+    Returns topic_id. Raises TopicCreationError on failure.
+    Caller is responsible for cleanup if this fails after step 1.
+    """
+    config = get_config()
+    bot_token = _get_bot_token()
+
+    # Step 1: Write pending marker
+    write_marker_file_pending(directory, task_name)
+
+    # Step 2: Create topic (may raise TopicCreationError)
+    topic_result = create_forum_topic(bot_token, str(config.group_id), task_name)
+    topic_id = topic_result.get("message_thread_id")
+
+    # Step 3: Send welcome message
+    send_to_topic(bot_token, str(config.group_id), topic_id, welcome_message)
+
+    # Step 4: Complete marker with full metadata
+    marker_data = {
+        "name": task_name,
+        "type": task_type,
+        "description": description,
+        "topic_id": topic_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if repo:
+        marker_data["repo"] = repo
+    write_marker_file(directory, marker_data)
+
+    return topic_id
 
 
 # ============ Worktree Operations ============
@@ -230,34 +288,29 @@ def spawn_worktree_task(repo_path: str, task_name: str, description: str) -> dic
     if not worktree_path:
         return None
 
-    # Create topic
-    bot_token = _get_bot_token()
+    # Create topic with crash-safe pattern
+    welcome = f"🚀 *Task created*\n\n_{escape_markdown_v2(description)}_"
     try:
-        topic_result = create_forum_topic(bot_token, str(config.group_id), task_name)
+        topic_id = _create_task_topic_safely(
+            directory=str(worktree_path),
+            task_name=task_name,
+            task_type="worktree",
+            description=description,
+            welcome_message=welcome,
+            repo=repo_path
+        )
     except TopicCreationError:
         delete_worktree(repo_path, str(worktree_path))
         raise
-
-    topic_id = topic_result.get("message_thread_id")
 
     # Create tmux session
     session_name = _get_session_name(task_name)
     pane = _create_tmux_session(session_name, str(worktree_path))
     if not pane:
+        bot_token = _get_bot_token()
         close_forum_topic(bot_token, str(config.group_id), topic_id)
         delete_worktree(repo_path, str(worktree_path))
         return None
-
-    # Write marker file
-    marker_data = {
-        "name": task_name,
-        "type": "worktree",
-        "repo": repo_path,
-        "description": description,
-        "topic_id": topic_id,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    write_marker_file(str(worktree_path), marker_data)
 
     # Update registry
     task_data = {
@@ -298,10 +351,15 @@ def spawn_session(directory: str, task_name: str, description: str) -> dict | No
         log(f"Task already exists: {task_name}")
         return None
 
-    # Create topic
-    bot_token = _get_bot_token()
-    topic_result = create_forum_topic(bot_token, str(config.group_id), task_name)
-    topic_id = topic_result.get("message_thread_id")
+    # Create topic with crash-safe pattern
+    welcome = f"🚀 *Task created*\n\n_{escape_markdown_v2(description)}_"
+    topic_id = _create_task_topic_safely(
+        directory=directory,
+        task_name=task_name,
+        task_type="session",
+        description=description,
+        welcome_message=welcome
+    )
 
     # Check for existing tmux pane in this directory
     existing_pane = _find_pane_by_directory(directory)
@@ -313,18 +371,9 @@ def spawn_session(directory: str, task_name: str, description: str) -> dict | No
         session_name = _get_session_name(task_name)
         pane = _create_tmux_session(session_name, directory)
         if not pane:
+            bot_token = _get_bot_token()
             close_forum_topic(bot_token, str(config.group_id), topic_id)
             return None
-
-    # Write marker file
-    marker_data = {
-        "name": task_name,
-        "type": "session",
-        "description": description,
-        "topic_id": topic_id,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    write_marker_file(directory, marker_data)
 
     # Update registry
     task_data = {
@@ -347,12 +396,7 @@ def spawn_session(directory: str, task_name: str, description: str) -> dict | No
 def register_existing_session(directory: str, task_name: str) -> dict | None:
     """Register an existing Claude session (auto-registration by daemon).
 
-    Uses pending marker pattern for crash recovery:
-    1. Write pending marker
-    2. Create topic
-    3. Send setup message
-    4. Complete marker + registry
-    5. Send completion message
+    Uses crash-safe topic creation pattern.
 
     Returns task_data dict on success, None if not configured/name collision/pending.
     Raises TopicCreationError if topic creation fails.
@@ -386,23 +430,17 @@ def register_existing_session(directory: str, task_name: str) -> dict | None:
             log(f"Pending recovery for {directory}, skipping")
             return None
 
-    # Step 1: Write pending marker
-    write_marker_file_pending(directory, task_name)
-
-    # Step 2: Create topic (raises TopicCreationError on failure)
-    bot_token = _get_bot_token()
-    topic_result = create_forum_topic(bot_token, str(config.group_id), task_name)
-    topic_id = topic_result.get("message_thread_id")
-
-    # Step 3: Send setup message
-    setup_msg = escape_markdown_v2(
-        f"Setup in progress for {task_name}. "
-        "If you don't see 'Setup complete' in a few seconds, reply with the task name."
+    # Create topic with crash-safe pattern
+    welcome = escape_markdown_v2("📡 Session discovered")
+    topic_id = _create_task_topic_safely(
+        directory=directory,
+        task_name=task_name,
+        task_type="session",
+        description="",
+        welcome_message=welcome
     )
-    send_to_topic(bot_token, str(config.group_id), topic_id, setup_msg)
 
-    # Step 4: Complete marker + registry
-    complete_pending_marker(directory, task_name, topic_id)
+    # Update registry
     task_data = {
         "type": "session",
         "path": directory,
@@ -410,10 +448,6 @@ def register_existing_session(directory: str, task_name: str) -> dict | None:
         "status": "active",
     }
     registry.add_task(task_name, task_data)
-
-    # Step 5: Send completion message
-    send_to_topic(bot_token, str(config.group_id), topic_id,
-                  escape_markdown_v2("Setup complete"))
 
     log(f"Registered existing session: {task_name} at {directory}")
     return task_data
@@ -508,10 +542,12 @@ def resume_task(task_name: str) -> str | None:
     return pane
 
 
-def cleanup_task(task_name: str) -> bool:
+def cleanup_task(task_name: str, archive_only: bool = False) -> bool:
     """Clean up a task. Behavior differs by type:
-    - worktree: delete directory + close topic
-    - session: remove marker + close topic (preserve directory)
+    - worktree: delete directory + delete topic
+    - session: remove marker + delete topic (preserve directory)
+
+    If archive_only=True, close topic instead of deleting.
     """
     registry = get_registry()
     task_data = registry.get_task(task_name)
@@ -526,15 +562,18 @@ def cleanup_task(task_name: str) -> bool:
     # Stop session
     stop_task_session(task_name)
 
-    # Update topic
+    # Delete or close topic
     if topic_id:
-        update_topic_status(topic_id, task_name, "done")
         try:
             bot_token = _get_bot_token()
             config = get_config()
-            close_forum_topic(bot_token, str(config.group_id), topic_id)
+            if archive_only:
+                update_topic_status(topic_id, task_name, "done")
+                close_forum_topic(bot_token, str(config.group_id), topic_id)
+            else:
+                delete_forum_topic(bot_token, str(config.group_id), topic_id)
         except Exception as e:
-            log(f"Failed to close topic: {e}")
+            log(f"Failed to {'close' if archive_only else 'delete'} topic: {e}")
 
     # Type-specific cleanup
     if task_type == "worktree" and repo and path:

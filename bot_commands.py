@@ -7,9 +7,47 @@ from telegram_utils import (
     State, send_reply, send_chat_action, log, is_forum_enabled
 )
 from registry import get_config, get_registry, rebuild_registry_from_markers
-from session_operator import (
-    start_operator_session, stop_operator_session, send_to_operator
-)
+from session_operator import start_operator_session, send_to_operator
+
+
+def parse_command_args(text: str) -> str | None:
+    """Extract arguments from a command, handling @botname suffix.
+
+    "/spawn@mybot foo bar" -> "foo bar"
+    "/spawn foo bar" -> "foo bar"
+    "/spawn" -> None
+    """
+    parts = text.split(None, 1)
+    if len(parts) < 2:
+        return None
+    return parts[1].strip()
+
+
+def build_spawn_prompt(request: str, task_name: str = None, task_data: dict = None, reply_ctx: str = None) -> str:
+    """Build the spawn request prompt for operator."""
+    lines = ["=" * 40]
+    lines.append("SPAWN REQUEST")
+    lines.append("=" * 40)
+    lines.append("")
+
+    if task_name and task_data:
+        lines.append(f"From task: {task_name}")
+        lines.append(f"Type: {task_data.get('type', 'session')}")
+        lines.append(f"Path: {task_data.get('path', '?')}")
+        lines.append("")
+
+    if reply_ctx:
+        lines.append("Context:")
+        lines.append(reply_ctx)
+        lines.append("")
+
+    lines.append(f"Request: {request}")
+    lines.append("")
+    lines.append("-" * 40)
+    lines.append("Please spawn a new task to handle this request.")
+    lines.append("Use spawn_task() or spawn_worktree() as appropriate.")
+    lines.append("-" * 40)
+    return "\n".join(lines)
 
 
 def build_cleanup_prompt(task_name: str, task_data: dict) -> str:
@@ -25,15 +63,11 @@ def build_cleanup_prompt(task_name: str, task_data: dict) -> str:
     lines.append(f"Status: {task_data.get('status', '?')}")
     lines.append("")
     lines.append("-" * 40)
-    lines.append("Please clean up this task:")
-    lines.append("1. Stop the tmux session if running")
-    lines.append("2. Close the Telegram topic")
-    lines.append("3. Remove from registry")
-    lines.append("4. For worktrees: delete the worktree directory")
-    lines.append("5. For sessions: just remove the marker file")
+    lines.append("Run cleanup_task to clean up:")
     lines.append("")
-    lines.append("Use: from session_worker import cleanup_task")
-    lines.append(f"     cleanup_task('{task_name}')")
+    lines.append("from session_worker import cleanup_task")
+    lines.append(f"cleanup_task('{task_name}')  # deletes topic")
+    lines.append(f"cleanup_task('{task_name}', archive_only=True)  # keeps topic (archived)")
     lines.append("-" * 40)
     return "\n".join(lines)
 
@@ -46,9 +80,9 @@ class CommandHandler:
         self.chat_id = chat_id
         self.state = state
 
-    def _reply(self, chat_id: str, msg_id: int, text: str):
+    def _reply(self, chat_id: str, msg_id: int, text: str, parse_mode: str = "Markdown"):
         """Send a reply to a message."""
-        send_reply(self.bot_token, chat_id, msg_id, text)
+        send_reply(self.bot_token, chat_id, msg_id, text, parse_mode)
 
     def _typing(self, chat_id: str, topic_id: int = None):
         """Show typing indicator."""
@@ -99,11 +133,6 @@ class CommandHandler:
             self._handle_setup(msg, chat_id, msg_id)
             return True
 
-        # /reset - remove configuration
-        if text_lower.startswith("/reset"):
-            self._handle_reset(msg, chat_id, msg_id)
-            return True
-
         # /help - show commands
         if text_lower.startswith("/help"):
             self._handle_help(chat_id, msg_id)
@@ -114,14 +143,29 @@ class CommandHandler:
             self._handle_status(chat_id, msg_id)
             return True
 
-        # /recover - rebuild registry from marker files
-        if text_lower.startswith("/recover"):
-            self._handle_recover(chat_id, msg_id)
+        # /spawn - create a new task (routes to operator)
+        if text_lower.startswith("/spawn"):
+            self._handle_spawn(msg, chat_id, msg_id, text, topic_id)
             return True
 
         # /cleanup - clean up a task (routes to operator)
         if text_lower.startswith("/cleanup"):
             self._handle_cleanup(msg, chat_id, msg_id, text, topic_id)
+            return True
+
+        # /tmux - show tmux attach command
+        if text_lower.startswith("/tmux"):
+            self._handle_tmux(chat_id, msg_id, topic_id)
+            return True
+
+        # /show - dump tmux pane output
+        if text_lower.startswith("/show"):
+            self._handle_show(chat_id, msg_id, topic_id)
+            return True
+
+        # /rebuild-registry - maintenance command to rebuild from markers
+        if text_lower.startswith("/rebuild-registry"):
+            self._handle_rebuild_registry(chat_id, msg_id)
             return True
 
         return False
@@ -268,33 +312,6 @@ class CommandHandler:
 
         log(f"  Setup complete for group {chat_id_int}")
 
-    def _handle_reset(self, msg: dict, chat_id: str, msg_id: int):
-        """Handle /reset - remove Claude Army configuration."""
-        chat = msg.get("chat", {})
-        chat_id_int = chat.get("id")
-
-        log(f"  /reset in chat {chat_id_int}")
-
-        config = get_config()
-
-        if not config.is_configured():
-            self._reply(chat_id, msg_id, "Claude Army is not configured.")
-            return
-
-        if config.group_id != chat_id_int:
-            self._reply(chat_id, msg_id,
-                "Claude Army is configured for a different group. "
-                "Run /reset in that group.")
-            return
-
-        # Stop operator and clear config
-        stop_operator_session()
-        config.clear()
-        self._reply(chat_id, msg_id,
-            "Claude Army configuration cleared. "
-            "You can run /setup in any group to reconfigure.")
-        log(f"  Reset complete for group {chat_id_int}")
-
     def _handle_status(self, chat_id: str, msg_id: int):
         """Handle /status - show all tasks and their status."""
         config = get_config()
@@ -320,8 +337,12 @@ class CommandHandler:
 
         self._reply(chat_id, msg_id, "\n".join(lines))
 
-    def _handle_recover(self, chat_id: str, msg_id: int):
-        """Handle /recover - rebuild registry from marker files."""
+    def _handle_rebuild_registry(self, chat_id: str, msg_id: int):
+        """Handle /rebuild-registry - rebuild registry from marker files.
+
+        This is a maintenance command for edge cases where the registry gets
+        out of sync with actual marker files on disk.
+        """
         config = get_config()
 
         if not config.is_configured():
@@ -336,14 +357,44 @@ class CommandHandler:
         else:
             self._reply(chat_id, msg_id, "No new tasks found.")
 
+    def _handle_spawn(self, msg: dict, chat_id: str, msg_id: int, text: str, topic_id: int | None):
+        """Handle /spawn - route spawn request to operator."""
+        request = parse_command_args(text)
+        if not request:
+            self._reply(chat_id, msg_id, "Usage: /spawn <description of task to create>")
+            return
+
+        # Get task context from registry if from a task topic
+        registry = get_registry()
+        task_name = None
+        task_data = None
+        if topic_id:
+            result = registry.find_task_by_topic(topic_id)
+            if result:
+                task_name, task_data = result
+
+        # Include reply context if present
+        reply_ctx = self._format_reply_context(msg)
+
+        prompt = build_spawn_prompt(request, task_name, task_data, reply_ctx)
+        if send_to_operator(prompt):
+            self._typing(chat_id, topic_id)
+            log(f"  /spawn sent to operator: {request[:50]}...")
+
+            # Reply with link to operator topic
+            config = get_config()
+            group_id = config.group_id
+            general_topic = config.general_topic_id or 1
+            link_chat_id = str(group_id).replace("-100", "")
+            link = f"https://t.me/c/{link_chat_id}/{general_topic}"
+            self._reply(chat_id, msg_id, f"Sent to [Operator]({link})")
+        else:
+            self._reply(chat_id, msg_id, "Operator not available")
+
     def _handle_cleanup(self, msg: dict, chat_id: str, msg_id: int, text: str, topic_id: int | None):
         """Handle /cleanup - route cleanup request to operator."""
         registry = get_registry()
-
-        # Extract task name from command (strip @botname suffix first)
-        clean_text = text.split("@")[0] if "@" in text else text
-        parts = clean_text.split(None, 1)
-        task_name = parts[1].strip() if len(parts) > 1 else None
+        task_name = parse_command_args(text)
 
         # If no task name provided, try to infer from topic
         if not task_name and topic_id:
@@ -369,6 +420,84 @@ class CommandHandler:
         send_to_operator(prompt)
         log(f"  /cleanup sent to operator: {task_name}")
 
+        # Reply with link to operator topic
+        config = get_config()
+        group_id = config.group_id
+        general_topic = config.general_topic_id or 1
+        # Telegram uses chat_id without -100 prefix for links
+        link_chat_id = str(group_id).replace("-100", "")
+        link = f"https://t.me/c/{link_chat_id}/{general_topic}"
+        self._reply(chat_id, msg_id, f"Sent to [Operator]({link})")
+
+    def _get_pane_for_topic(self, topic_id: int | None) -> tuple[str, str] | None:
+        """Get (task_name, pane) for a topic. Returns operator for General topic."""
+        config = get_config()
+        is_general = topic_id is None or topic_id == config.general_topic_id
+        if is_general:
+            pane = config.operator_pane
+            return ("operator", pane) if pane else None
+
+        registry = get_registry()
+        result = registry.find_task_by_topic(topic_id)
+        if result:
+            task_name, task_data = result
+            return (task_name, task_data.get("pane"))
+        return None
+
+    def _handle_tmux(self, chat_id: str, msg_id: int, topic_id: int | None):
+        """Handle /tmux - show tmux attach command for task."""
+        result = self._get_pane_for_topic(topic_id)
+        if not result:
+            self._reply(chat_id, msg_id, "Send from a task topic to get its tmux command.")
+            return
+
+        task_name, pane = result
+        session = pane.split(":")[0] if pane and ":" in pane else pane
+
+        if session:
+            self._reply(chat_id, msg_id, f"`tmux attach -t {session}`")
+        else:
+            self._reply(chat_id, msg_id, f"No tmux session found for '{task_name}'.")
+
+    def _handle_show(self, chat_id: str, msg_id: int, topic_id: int | None):
+        """Handle /show - dump tmux pane output."""
+        import subprocess
+
+        result = self._get_pane_for_topic(topic_id)
+        if not result:
+            self._reply(chat_id, msg_id, "Send from a task topic to show its output.")
+            return
+
+        task_name, pane = result
+        if not pane:
+            self._reply(chat_id, msg_id, f"No tmux pane found for '{task_name}'.")
+            return
+
+        try:
+            output = subprocess.run(
+                ["tmux", "capture-pane", "-t", pane, "-p", "-S", "-50"],
+                capture_output=True, text=True, timeout=5
+            )
+            if output.returncode != 0:
+                self._reply(chat_id, msg_id, f"Failed to capture pane: {output.stderr}")
+                return
+
+            text = output.stdout.strip()
+            if not text:
+                self._reply(chat_id, msg_id, "_Pane is empty_")
+                return
+
+            # Truncate if too long for Telegram
+            if len(text) > 3500:
+                text = text[-3500:]
+                text = "...\n" + text
+
+            self._reply(chat_id, msg_id, f"```\n{text}\n```")
+        except subprocess.TimeoutExpired:
+            self._reply(chat_id, msg_id, "Timeout capturing pane.")
+        except Exception as e:
+            self._reply(chat_id, msg_id, f"Error: {e}")
+
     def _handle_help(self, chat_id: str, msg_id: int):
         """Handle /help - show available commands."""
         config = get_config()
@@ -376,13 +505,15 @@ class CommandHandler:
         help_text = """*Claude Army Commands*
 
 /setup - Initialize this group as control center
-/reset - Remove Claude Army configuration
 /status - Show all tasks and status
-/recover - Rebuild registry from marker files
-/cleanup <task> - Clean up a task
+/spawn <desc> - Create a new task
+/cleanup - Clean up current task
+/tmux - Show tmux attach command
+/show - Dump tmux pane output
 /help - Show this help message
 /todo <item> - Add todo to Operator queue
 /debug - Show debug info for a message (reply to it)
+/rebuild-registry - Rebuild registry from markers (maintenance)
 
 *Operator Commands* (natural language):
 - "Create task X in repo Y"

@@ -137,12 +137,15 @@ Note: `group_id`, `general_topic_id`, and `operator_pane` are in `config.json`, 
 | Command | Description |
 |---------|-------------|
 | `/setup` | Initialize group as control center |
-| `/reset` | Remove configuration |
 | `/status` | Show all tasks and status |
-| `/recover` | Rebuild registry from marker files |
+| `/spawn <desc>` | Create a new task (routes to operator) |
+| `/cleanup` | Clean up current task (routes to operator) |
+| `/tmux` | Show tmux attach command for current topic |
+| `/show` | Dump tmux pane output for current topic |
 | `/help` | Show available commands |
 | `/todo <item>` | Add todo to Operator queue |
 | `/debug` | Debug a message (reply to it) |
+| `/rebuild-registry` | Rebuild registry from marker files (maintenance) |
 
 Commands are registered via `setMyCommands` API at startup.
 
@@ -535,7 +538,7 @@ If `operator/registry.json` is corrupted/lost:
    - Add to registry
 3. All tasks (worktree and session) are recovered
 
-Use `/recover` command to trigger this manually.
+Use `/rebuild-registry` command to trigger this manually.
 
 ## Crash-Safe Topic Creation
 

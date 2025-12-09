@@ -10,7 +10,7 @@ After ANY change to functionality, update `SPEC.md` to reflect the change. No ex
 
 ## Running the Daemon
 
-Run `telegram-daemon.py` using `run_in_background: true`. Never use shell background syntax (`&`) as it prevents output monitoring.
+**IMPORTANT**: You own the daemon as a background task. Use `run_in_background: true` with the Bash tool to start `./telegram-daemon.py`. Never use shell background syntax (`&`) as it prevents output monitoring. When you need to restart the daemon, use KillShell on the background bash ID, then start a new background task.
 
 ## Codebase Overview
 

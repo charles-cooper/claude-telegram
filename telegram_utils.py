@@ -225,11 +225,14 @@ def answer_callback(bot_token: str, callback_id: str, text: str = None):
     )
 
 
-def send_reply(bot_token: str, chat_id: str, reply_to_msg_id: int, text: str):
+def send_reply(bot_token: str, chat_id: str, reply_to_msg_id: int, text: str, parse_mode: str = None):
     """Send a reply message on Telegram."""
+    payload = {"chat_id": chat_id, "text": text, "reply_to_message_id": reply_to_msg_id}
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
     requests.post(
         f"https://api.telegram.org/bot{bot_token}/sendMessage",
-        json={"chat_id": chat_id, "text": text, "reply_to_message_id": reply_to_msg_id}
+        json=payload
     )
 
 
@@ -269,13 +272,15 @@ def register_bot_commands(bot_token: str):
     """Register bot commands with Telegram. Raises on failure."""
     commands = [
         {"command": "setup", "description": "Initialize this group as control center"},
-        {"command": "reset", "description": "Remove configuration"},
         {"command": "status", "description": "Show all tasks and status"},
-        {"command": "recover", "description": "Rebuild registry from marker files"},
+        {"command": "spawn", "description": "Create a new task"},
+        {"command": "cleanup", "description": "Clean up a task"},
+        {"command": "tmux", "description": "Show tmux attach command"},
+        {"command": "show", "description": "Dump tmux pane output"},
         {"command": "help", "description": "Show available commands"},
         {"command": "todo", "description": "Add todo to Operator queue"},
         {"command": "debug", "description": "Show debug info for a message (reply to it)"},
-        {"command": "cleanup", "description": "Clean up a task"},
+        {"command": "rebuild_registry", "description": "Rebuild registry from markers (maintenance)"},
     ]
     resp = requests.post(
         f"https://api.telegram.org/bot{bot_token}/setMyCommands",
@@ -329,9 +334,18 @@ def create_forum_topic(bot_token: str, chat_id: str, name: str, icon_color: int 
 
 
 def close_forum_topic(bot_token: str, chat_id: str, topic_id: int) -> bool:
-    """Close a forum topic. Returns True on success."""
+    """Close (archive) a forum topic. Returns True on success."""
     resp = requests.post(
         f"https://api.telegram.org/bot{bot_token}/closeForumTopic",
+        json={"chat_id": chat_id, "message_thread_id": topic_id}
+    )
+    return resp.ok
+
+
+def delete_forum_topic(bot_token: str, chat_id: str, topic_id: int) -> bool:
+    """Delete a forum topic permanently. Returns True on success."""
+    resp = requests.post(
+        f"https://api.telegram.org/bot{bot_token}/deleteForumTopic",
         json={"chat_id": chat_id, "message_thread_id": topic_id}
     )
     return resp.ok
