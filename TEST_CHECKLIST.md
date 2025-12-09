@@ -17,7 +17,7 @@
 
 ## Phase 2: Operator
 - [ ] After `/setup`, tmux session `claude-operator` exists
-- [ ] Send message in General topic → routed to operator pane (👀 reaction)
+- [ ] Send message in General topic → routed to operator pane (typing indicator)
 - [ ] Operator responds → appears in General topic
 - [ ] `/todo fix the bug` → sent to operator with [TODO] prefix
 - [ ] Reply to a message with `/debug` → debug info sent to operator

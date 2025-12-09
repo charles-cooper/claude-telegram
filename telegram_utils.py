@@ -249,18 +249,6 @@ def send_chat_action(bot_token: str, chat_id: str, action: str = "typing", topic
     )
 
 
-def react_to_message(bot_token: str, chat_id: str, msg_id: int, emoji: str = "👀"):
-    """React to a message with an emoji."""
-    requests.post(
-        f"https://api.telegram.org/bot{bot_token}/setMessageReaction",
-        json={
-            "chat_id": chat_id,
-            "message_id": msg_id,
-            "reaction": [{"type": "emoji", "emoji": emoji}]
-        }
-    )
-
-
 def register_bot_commands(bot_token: str):
     """Register bot commands with Telegram. Raises on failure."""
     commands = [

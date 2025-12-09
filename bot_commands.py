@@ -2,11 +2,9 @@
 
 import datetime
 import json
-import time
 
 from telegram_utils import (
-    State, pane_exists, send_reply, react_to_message, log,
-    is_forum_enabled
+    State, send_reply, send_chat_action, log, is_forum_enabled
 )
 from registry import get_config, get_registry, rebuild_registry_from_markers
 from session_operator import (
@@ -26,9 +24,9 @@ class CommandHandler:
         """Send a reply to a message."""
         send_reply(self.bot_token, chat_id, msg_id, text)
 
-    def _react(self, chat_id: str, msg_id: int, emoji: str = "👀"):
-        """React to a message."""
-        react_to_message(self.bot_token, chat_id, msg_id, emoji)
+    def _typing(self, chat_id: str, topic_id: int = None):
+        """Show typing indicator."""
+        send_chat_action(self.bot_token, chat_id, "typing", topic_id)
 
     def _format_reply_context(self, msg: dict) -> str | None:
         """Format context from a replied-to message for the operator."""
@@ -142,7 +140,7 @@ class CommandHandler:
         lines.append("-" * 40)
 
         if send_to_operator("\n".join(lines)):
-            self._react(chat_id, msg_id)
+            self._typing(chat_id, topic_id)
             log(f"  /todo sent to operator: {todo_text[:50]}...")
         else:
             self._reply(chat_id, msg_id, "Operator not available")
@@ -179,8 +177,9 @@ class CommandHandler:
             entry = self.state.get(reply_str)
             lines.append(f"Full state: {json.dumps(entry)}")
 
+        topic_id = msg.get("message_thread_id")
         if send_to_operator("\n".join(lines)):
-            self._react(chat_id, msg_id)
+            self._typing(chat_id, topic_id)
             log(f"  /debug sent to operator for msg_id={reply_to_id}")
         else:
             self._reply(chat_id, msg_id, "Operator not available")
