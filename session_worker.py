@@ -29,10 +29,60 @@ SESSION_PREFIX = "ca-"  # claude-army
 SETUP_HOOK_NAME = ".claude-army-setup.sh"
 DISCOVER_TRIGGER = Path("/tmp/claude-army-discover")
 
+CLAUDE_LOCAL_TEMPLATE = """# Task: {task_name}
+
+{description}
+
+## Instructions
+
+- Update this file with learnings as you work. These persist across sessions.
+- Check TODO.local.md periodically for new tasks from the user.
+- When you find new todos, add them to your todo stack (TodoWrite).
+- Mark todos done in TODO.local.md after completing them.
+- Periodically clean up TODO.local.md by removing completed items.
+
+## Learnings
+
+<!-- Add your learnings below -->
+"""
+
 
 def trigger_daemon_discovery():
     """Signal the daemon to discover new transcripts immediately."""
     DISCOVER_TRIGGER.touch()
+
+
+def create_claude_local_md(directory: str, task_name: str, description: str = ""):
+    """Create CLAUDE.local.md in task directory if it doesn't exist."""
+    path = Path(directory) / "CLAUDE.local.md"
+    if path.exists():
+        return  # Don't overwrite existing file (preserves learnings)
+
+    content = CLAUDE_LOCAL_TEMPLATE.format(
+        task_name=task_name,
+        description=description or "(No description provided)"
+    )
+    path.write_text(content)
+    log(f"Created CLAUDE.local.md in {directory}")
+
+
+def append_todo(directory: str, item: str) -> bool:
+    """Append a todo item to TODO.local.md in the task directory.
+
+    Creates the file with header if it doesn't exist.
+    Returns True on success, False on failure.
+    """
+    path = Path(directory) / "TODO.local.md"
+    try:
+        if not path.exists():
+            path.write_text("# TODO\n\n")
+        with open(path, "a") as f:
+            f.write(f"- [ ] {item}\n")
+        log(f"Added todo to {directory}: {item[:50]}...")
+        return True
+    except Exception as e:
+        log(f"Failed to append todo: {e}")
+        return False
 
 
 def _get_bot_token() -> str:
@@ -332,6 +382,9 @@ def spawn_worktree_task(repo_path: str, task_name: str, description: str) -> dic
     }
     registry.add_task(task_name, task_data)
 
+    # Create CLAUDE.local.md for the task
+    create_claude_local_md(str(worktree_path), task_name, description)
+
     # Start Claude
     _start_claude(pane, description)
 
@@ -393,6 +446,9 @@ def spawn_session(directory: str, task_name: str, description: str) -> dict | No
         "status": "active",
     }
     registry.add_task(task_name, task_data)
+
+    # Create CLAUDE.local.md for the task
+    create_claude_local_md(directory, task_name, description)
 
     # Only start Claude if we created a new session
     if not existing_pane:
@@ -457,6 +513,9 @@ def register_existing_session(directory: str, task_name: str) -> dict | None:
         "status": "active",
     }
     registry.add_task(task_name, task_data)
+
+    # Create CLAUDE.local.md for the task
+    create_claude_local_md(directory, task_name)
 
     log(f"Registered existing session: {task_name} at {directory}")
     return task_data

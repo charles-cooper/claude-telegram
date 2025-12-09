@@ -145,7 +145,7 @@ You'll be notified when:
 | `/cleanup [task]` | Clean up a task (kill session, remove worktree if applicable) |
 | `/tmux` | Show tmux attach command for the current topic's session |
 | `/show` | Dump recent tmux pane output for the current topic |
-| `/todo <item>` | Add a todo item to the Operator's queue |
+| `/todo <item>` | Add todo (writes to TODO.local.md in task topics, routes to Operator in General) |
 | `/debug` | Debug a message (reply to the message first) |
 | `/rebuild-registry` | Rebuild task registry from marker files (maintenance) |
 | `/help` | Show available commands |

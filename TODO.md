@@ -7,12 +7,12 @@
 - [x] Refactor telegram_poller routing (extract permission reply handling)
 
 ## Async Todo Workflow
-- [ ] /todo should write to TODO.local.md in the task's working directory (not route to operator)
-- [ ] Claude instances should read TODO.local.md regularly and update their todo stack
+- [x] /todo should write to TODO.local.md in the task's working directory (not route to operator)
+- [x] Claude instances should read TODO.local.md regularly and update their todo stack
 - [ ] Claude should send TG message when it acknowledges new todos
 
 ## Task Directory Setup
-- [ ] Generate CLAUDE.local.md in each task directory on creation
+- [x] Generate CLAUDE.local.md in each task directory on creation
   - Include instruction: "update me to propagate learnings to future sessions"
 - [ ] Operator should be able to update the CLAUDE.local.md template (maybe?)
 

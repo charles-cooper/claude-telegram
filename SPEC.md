@@ -102,6 +102,27 @@ Both types:
 }
 ```
 
+### Task Directory Files
+
+Created automatically when a task is spawned:
+
+**CLAUDE.local.md** - Instructions for the Claude instance:
+- Task name and description
+- Instructions to update file with learnings (persists across sessions)
+- Instructions to check TODO.local.md periodically
+
+**TODO.local.md** - Async todo queue:
+- Created when first `/todo` is sent to a task topic
+- Format: markdown checkboxes (`- [ ] item`)
+- Claude is instructed to add items to its todo stack and mark done when complete
+
+Example workflow:
+1. User sends `/todo fix the failing test` in task topic
+2. System appends `- [ ] fix the failing test` to TODO.local.md
+3. Claude periodically checks file, adds to its TodoWrite stack
+4. Claude works on item, marks it `- [x]` when done
+5. Claude periodically cleans up completed items from the file
+
 ### Registry Cache Format
 
 ```json
@@ -143,7 +164,7 @@ Note: `group_id`, `general_topic_id`, and `operator_pane` are in `config.json`, 
 | `/tmux` | Show tmux attach command for current topic |
 | `/show` | Dump tmux pane output for current topic |
 | `/help` | Show available commands |
-| `/todo <item>` | Add todo to Operator queue |
+| `/todo <item>` | Add todo (writes to TODO.local.md in task topics, routes to Operator in General topic) |
 | `/debug` | Debug a message (reply to it) |
 | `/rebuild-registry` | Rebuild registry from marker files (maintenance) |
 

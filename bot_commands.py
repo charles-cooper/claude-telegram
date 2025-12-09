@@ -8,6 +8,7 @@ from telegram_utils import (
 )
 from registry import get_config, get_registry, rebuild_registry_from_markers
 from session_operator import start_operator_session, send_to_operator
+from session_worker import append_todo
 
 
 def parse_command_args(text: str) -> str | None:
@@ -183,13 +184,14 @@ class CommandHandler:
         return False
 
     def _handle_todo(self, msg: dict, chat_id: str, msg_id: int, text: str, topic_id: int | None):
-        """Handle /todo - send rich prompt to operator with context."""
+        """Handle /todo - write to TODO.local.md for task topics, route to operator for general."""
         todo_text = text[5:].strip()  # Remove "/todo"
         if not todo_text:
             self._reply(chat_id, msg_id, "Usage: /todo <item>")
             return
 
         # Get task context from registry if from a task topic
+        config = get_config()
         registry = get_registry()
         task_name = None
         task_data = None
@@ -198,7 +200,19 @@ class CommandHandler:
             if result:
                 task_name, task_data = result
 
-        # Build rich prompt for operator
+        # If in a task topic, write to TODO.local.md
+        # Claude will pick it up when it periodically checks (per CLAUDE.local.md instructions)
+        is_general = topic_id is None or topic_id == config.general_topic_id
+        if task_name and task_data and not is_general:
+            path = task_data.get("path")
+            if path and append_todo(path, todo_text):
+                self._reply(chat_id, msg_id, "✅ Added to TODO.local.md")
+                log(f"  /todo added to {task_name}: {todo_text[:50]}...")
+            else:
+                self._reply(chat_id, msg_id, "Failed to add todo")
+            return
+
+        # General topic or no task: route to operator
         lines = ["=" * 40]
         lines.append("NEW TODO ITEM")
         lines.append("=" * 40)

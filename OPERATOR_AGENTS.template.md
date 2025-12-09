@@ -268,3 +268,16 @@ If a worker seems stuck:
 2. Check if there's a pending permission prompt
 3. Review recent transcript entries
 4. Send a message to prompt action if needed
+
+## Spawning and Cleanup
+
+Use functions from `session_worker.py` for task lifecycle:
+- Spawning worktree tasks and sessions
+- Cleaning up tasks (removes from registry, closes topics)
+- Always clean up registry before re-spawning a task that was manually deleted
+
+### Known Issues
+
+**Orphaned directories:** If spawn detects an existing directory, it reuses it without verifying it's a valid git worktree. If the user manually deleted the worktree (via git) but directory remains, subsequent cleanup will fail. Check `git worktree list` to verify worktree status.
+
+**Topic editing:** Check `telegram_utils.py` for functions to rename/edit topics.
