@@ -20,6 +20,8 @@ For permission prompts, notifications include full context:
 
 This tool is in BETA mode and under active development. There may be weird behavior or edge cases! If you would like to try it out and/or contribute, please run the daemon inside of a claude instance in your claude-army/ directory, and you can ask it to help you debug things!
 
+Debug flow: reply to a message with `/debug` to get its debug info, then forward that to claude-army instance and ask it to debug it (including what you expected vs what happened).
+
 ## Requirements
 
 - Claude Code running inside a tmux session (the daemon uses tmux to inject keystrokes)
