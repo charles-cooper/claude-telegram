@@ -338,13 +338,20 @@ class CommandHandler:
 
     def _handle_cleanup(self, msg: dict, chat_id: str, msg_id: int, text: str, topic_id: int | None):
         """Handle /cleanup - route cleanup request to operator."""
+        registry = get_registry()
+
         # Extract task name from command (strip @botname suffix first)
         clean_text = text.split("@")[0] if "@" in text else text
         parts = clean_text.split(None, 1)
         task_name = parts[1].strip() if len(parts) > 1 else None
 
+        # If no task name provided, try to infer from topic
+        if not task_name and topic_id:
+            result = registry.find_task_by_topic(topic_id)
+            if result:
+                task_name, _ = result
+
         if not task_name:
-            registry = get_registry()
             tasks = registry.get_all_tasks()
             if tasks:
                 task_list = ", ".join(name for name, _ in tasks)
@@ -353,7 +360,6 @@ class CommandHandler:
                 self._reply(chat_id, msg_id, "Usage: /cleanup <task_name>\n\nNo active tasks.")
             return
 
-        registry = get_registry()
         task_data = registry.get_task(task_name)
         if not task_data:
             self._reply(chat_id, msg_id, f"Task '{task_name}' not found. Run /status to see tasks.")

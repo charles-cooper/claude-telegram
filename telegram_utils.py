@@ -275,6 +275,7 @@ def register_bot_commands(bot_token: str):
         {"command": "help", "description": "Show available commands"},
         {"command": "todo", "description": "Add todo to Operator queue"},
         {"command": "debug", "description": "Show debug info for a message (reply to it)"},
+        {"command": "cleanup", "description": "Clean up a task"},
     ]
     resp = requests.post(
         f"https://api.telegram.org/bot{bot_token}/setMyCommands",
