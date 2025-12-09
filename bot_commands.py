@@ -98,23 +98,48 @@ class CommandHandler:
         return False
 
     def _handle_todo(self, msg: dict, chat_id: str, msg_id: int, text: str, topic_id: int | None):
-        """Handle /todo - send to operator with context."""
+        """Handle /todo - send rich prompt to operator with context."""
         todo_text = text[5:].strip()  # Remove "/todo"
         if not todo_text:
             self._reply(chat_id, msg_id, "Usage: /todo <item>")
             return
 
-        # Build message for operator
-        lines = ["[TODO]"]
+        # Get task context from registry if from a task topic
+        registry = get_registry()
+        task_name = None
+        task_data = None
         if topic_id:
-            lines.append(f"From topic: {topic_id}")
+            result = registry.find_task_by_topic(topic_id)
+            if result:
+                task_name, task_data = result
+
+        # Build rich prompt for operator
+        lines = ["=" * 40]
+        lines.append("NEW TODO ITEM")
+        lines.append("=" * 40)
+        lines.append("")
+
+        if task_name and task_data:
+            lines.append(f"From task: {task_name}")
+            lines.append(f"Registry: {json.dumps(task_data, indent=2)}")
+            lines.append("")
 
         # Include reply context if present
         reply_ctx = self._format_reply_context(msg)
         if reply_ctx:
+            lines.append("Context:")
             lines.append(reply_ctx)
+            lines.append("")
 
-        lines.append(f"Item: {todo_text}")
+        lines.append(f"Request: {todo_text}")
+        lines.append("")
+        lines.append("-" * 40)
+        lines.append("Please investigate this in the relevant repo/codebase.")
+        lines.append("Gather context, understand the issue, and either:")
+        lines.append("  1. Handle it yourself if simple")
+        lines.append("  2. Spawn/delegate to a worker with clear instructions")
+        lines.append("  3. Ask clarifying questions if needed")
+        lines.append("-" * 40)
 
         if send_to_operator("\n".join(lines)):
             self._react(chat_id, msg_id)
