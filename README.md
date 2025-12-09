@@ -135,6 +135,23 @@ You'll be notified when:
 - Context compaction starts (PreCompact)
 - Context compaction completes (PostCompact)
 
+### Bot Commands
+
+| Command | Description |
+|---------|-------------|
+| `/setup` | Initialize a Telegram group as the control center |
+| `/status` | Show all active tasks and their status |
+| `/spawn <description>` | Create a new task (routes request to Operator Claude) |
+| `/cleanup [task]` | Clean up a task (kill session, remove worktree if applicable) |
+| `/tmux` | Show tmux attach command for the current topic's session |
+| `/show` | Dump recent tmux pane output for the current topic |
+| `/todo <item>` | Add a todo item to the Operator's queue |
+| `/debug` | Debug a message (reply to the message first) |
+| `/rebuild-registry` | Rebuild task registry from marker files (maintenance) |
+| `/help` | Show available commands |
+
+Commands like `/spawn` and `/cleanup` are handled by the Operator Claude, which interprets your request and performs the appropriate actions.
+
 ## Notification types
 
 | Event | Triggers when |
