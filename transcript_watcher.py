@@ -128,6 +128,33 @@ class TranscriptWatcher:
 
         return ready_tools, compactions, idle_events, had_activity
 
+    def _handle_compaction(self, entry: dict) -> bool:
+        """Handle compaction event. Returns True if handled."""
+        if entry.get("type") != "system" or entry.get("subtype") != "compact_boundary":
+            return False
+        metadata = entry.get("compactMetadata", {})
+        log(f"Detected: compaction ({metadata.get('trigger', 'unknown')})")
+        self.compactions.append(CompactionEvent(
+            trigger=metadata.get("trigger", "unknown"),
+            pre_tokens=metadata.get("preTokens", 0),
+            pane=self.pane,
+            cwd=self.cwd
+        ))
+        return True
+
+    def _handle_tool_result(self, entry: dict) -> bool:
+        """Handle tool_result entries. Returns True if handled."""
+        if entry.get("type") != "user":
+            return False
+        for c in entry.get("message", {}).get("content", []):
+            if isinstance(c, dict) and c.get("type") == "tool_result":
+                tool_use_id = c.get("tool_use_id")
+                if tool_use_id:
+                    self.tool_results.add(tool_use_id)
+                    self.notified_tools.discard(tool_use_id)
+                    self.pending_tools.pop(tool_use_id, None)
+        return True
+
     def _process_line(self, line: str) -> bool:
         """Process a single transcript line. Returns True if Claude is actively working."""
         try:
@@ -135,32 +162,15 @@ class TranscriptWatcher:
         except json.JSONDecodeError:
             return False  # Partial line
 
-        # Check for compaction event
-        if entry.get("type") == "system" and entry.get("subtype") == "compact_boundary":
-            metadata = entry.get("compactMetadata", {})
-            log(f"Detected: compaction ({metadata.get('trigger', 'unknown')})")
-            self.compactions.append(CompactionEvent(
-                trigger=metadata.get("trigger", "unknown"),
-                pre_tokens=metadata.get("preTokens", 0),
-                pane=self.pane,
-                cwd=self.cwd
-            ))
+        # Handle compaction events
+        if self._handle_compaction(entry):
             return False  # Compaction isn't "active work"
 
         # Track tool_results
-        if entry.get("type") == "user":
-            for c in entry.get("message", {}).get("content", []):
-                if isinstance(c, dict) and c.get("type") == "tool_result":
-                    tool_use_id = c.get("tool_use_id")
-                    if tool_use_id:
-                        self.tool_results.add(tool_use_id)
-                        self.notified_tools.discard(tool_use_id)
-                        # Remove from pending if waiting
-                        if tool_use_id in self.pending_tools:
-                            del self.pending_tools[tool_use_id]
+        if self._handle_tool_result(entry):
             return False  # Tool results mean Claude is waiting, not working
 
-        # Check for new tool_use
+        # Only assistant entries from here on
         if entry.get("type") != "assistant":
             return False
 

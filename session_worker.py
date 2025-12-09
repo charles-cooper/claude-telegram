@@ -14,7 +14,7 @@ from pathlib import Path
 
 from telegram_utils import (
     log, edit_forum_topic, create_forum_topic, close_forum_topic,
-    shell_quote, TopicCreationError
+    shell_quote, TopicCreationError, send_to_tmux_pane
 )
 from registry import (
     get_config, get_registry, write_marker_file, read_marker_file,
@@ -446,15 +446,22 @@ def resume_task(task_name: str) -> str | None:
         marker["status"] = "active"
         write_marker_file(path, marker)
 
-    # Create session
+    # Create session (handle race where session already exists)
     session_name = _get_session_name(task_name)
     pane = _create_tmux_session(session_name, path)
+    session_already_existed = False
     if not pane:
-        return None
+        # Session might already exist (race condition) - check and use if so
+        if _session_exists(session_name):
+            pane = _get_pane_id(session_name)
+            session_already_existed = True
+        if not pane:
+            return None
 
-    # Start Claude with resume
-    description = marker.get("description", task_name) if marker else task_name
-    _start_claude(pane, description, resume=True)
+    # Only start Claude if we created the session (avoid double-start on race)
+    if not session_already_existed:
+        description = marker.get("description", task_name) if marker else task_name
+        _start_claude(pane, description, resume=True)
 
     # Update registry
     task_data["status"] = "active"
@@ -545,15 +552,7 @@ def send_to_worker(topic_id: int, text: str) -> bool:
         log(f"Failed to get pane for topic {topic_id}")
         return False
 
-    try:
-        subprocess.run(["tmux", "send-keys", "-t", pane, "C-u"], check=True)
-        subprocess.run(["tmux", "send-keys", "-t", pane, "-l", text], check=True)
-        time.sleep(0.1)
-        subprocess.run(["tmux", "send-keys", "-t", pane, "Enter"], check=True)
-        return True
-    except subprocess.CalledProcessError as e:
-        log(f"Failed to send to worker: {e}")
-        return False
+    return send_to_tmux_pane(pane, text)
 
 
 def is_worker_pane(pane: str) -> tuple[bool, int | None]:

@@ -8,6 +8,7 @@ import requests
 import shlex
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 
@@ -169,6 +170,21 @@ def pane_exists(pane: str) -> bool:
         capture_output=True
     )
     return result.returncode == 0
+
+
+def send_to_tmux_pane(pane: str, text: str) -> bool:
+    """Send text to a tmux pane. Clears line first, sends text, then Enter.
+
+    Returns True on success, False on failure (e.g., pane dead).
+    """
+    try:
+        subprocess.run(["tmux", "send-keys", "-t", pane, "C-u"], check=True)
+        subprocess.run(["tmux", "send-keys", "-t", pane, "-l", text], check=True)
+        time.sleep(0.1)
+        subprocess.run(["tmux", "send-keys", "-t", pane, "Enter"], check=True)
+        return True
+    except subprocess.CalledProcessError:
+        return False
 
 
 def send_telegram(bot_token: str, chat_id: str, msg: str, tool_name: str = None, reply_markup: dict = None, parse_mode: str = "Markdown") -> dict | None:

@@ -5,7 +5,7 @@ import time
 
 from pathlib import Path
 
-from telegram_utils import log
+from telegram_utils import log, send_to_tmux_pane
 from registry import get_config
 
 # Short prefix to avoid collisions with user sessions
@@ -66,9 +66,14 @@ def start_operator_session() -> str | None:
         ["tmux", "new-session", "-d", "-s", OPERATOR_SESSION, "-c", str(OPERATOR_DIR)],
         capture_output=True, text=True
     )
+    session_already_existed = False
     if result.returncode != 0:
-        log(f"Failed to create session: {result.stderr}")
-        return None
+        # Session might already exist (race condition) - check and use if so
+        if session_exists():
+            session_already_existed = True
+        else:
+            log(f"Failed to create session: {result.stderr}")
+            return None
 
     time.sleep(0.2)
 
@@ -77,8 +82,9 @@ def start_operator_session() -> str | None:
         log("Failed to get pane ID")
         return None
 
-    # Start Claude - try continue (auto-resumes most recent), fall back to fresh
-    subprocess.run(["tmux", "send-keys", "-t", pane, "claude --continue || claude", "Enter"])
+    # Only start Claude if we created the session (avoid double-start on race)
+    if not session_already_existed:
+        subprocess.run(["tmux", "send-keys", "-t", pane, "claude --continue || claude", "Enter"])
 
     config = get_config()
     config.operator_pane = pane
@@ -122,15 +128,7 @@ def send_to_operator(text: str) -> bool:
         log("Failed to get operator pane")
         return False
 
-    try:
-        subprocess.run(["tmux", "send-keys", "-t", pane, "C-u"], check=True)
-        subprocess.run(["tmux", "send-keys", "-t", pane, "-l", text], check=True)
-        time.sleep(0.1)
-        subprocess.run(["tmux", "send-keys", "-t", pane, "Enter"], check=True)
-        return True
-    except subprocess.CalledProcessError as e:
-        log(f"Failed to send to operator: {e}")
-        return False
+    return send_to_tmux_pane(pane, text)
 
 
 def check_and_resurrect_operator() -> str | None:

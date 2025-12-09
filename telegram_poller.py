@@ -7,7 +7,7 @@ import time
 import requests
 
 from telegram_utils import (
-    State, answer_callback, send_reply, update_message_buttons, log
+    State, answer_callback, send_reply, update_message_buttons, log, send_to_tmux_pane
 )
 from bot_commands import CommandHandler
 from registry import get_config
@@ -57,15 +57,7 @@ def get_pending_tool_from_transcript(transcript_path: str) -> str | None:
 
 def send_to_pane(pane: str, text: str) -> bool:
     """Send text to a tmux pane."""
-    try:
-        subprocess.run(["tmux", "send-keys", "-t", pane, "C-u"], check=True)
-        subprocess.run(["tmux", "send-keys", "-t", pane, "-l", text], check=True)
-        time.sleep(0.1)
-        subprocess.run(["tmux", "send-keys", "-t", pane, "Enter"], check=True)
-        return True
-    except subprocess.CalledProcessError as e:
-        log(f"  Error: {e}")
-        return False
+    return send_to_tmux_pane(pane, text)
 
 
 def send_text_to_permission_prompt(pane: str, text: str, already_at_input: bool = False) -> bool:
@@ -121,16 +113,13 @@ def send_permission_response(pane: str, response: str) -> bool:
 
 def get_action_label(action: str, tool_name: str = None) -> str:
     """Get button label for an action."""
-    if action == "y":
-        return "✓ Allowed"
-    elif action == "a":
-        return "✓ Always"
-    elif action == "n":
-        return "📝 Reply"
-    elif action == "replied":
-        return "💬 Replied"
-    else:
-        return "⏰ Expired"
+    labels = {
+        "y": "✓ Allowed",
+        "a": "✓ Always",
+        "n": "📝 Reply",
+        "replied": "💬 Replied",
+    }
+    return labels.get(action, "⏰ Expired")
 
 
 class TelegramPoller:
@@ -147,6 +136,29 @@ class TelegramPoller:
                 continue
             return True
         return False
+
+    def _expire_batch_permissions(self, pane: str, exclude_msg_id: str, chat_id: str):
+        """Expire all pending permission prompts for a pane (batch denial)."""
+        for msg_id, entry in list(self.state.items()):
+            if msg_id == exclude_msg_id:
+                continue
+            if entry.get("pane") != pane:
+                continue
+            if entry.get("type") != "permission_prompt":
+                continue
+            if entry.get("handled"):
+                continue
+            update_message_buttons(self.bot_token, chat_id, int(msg_id), "❌ Denied via batch denial")
+            self.state.update(msg_id, handled=True)
+            log(f"  Expired queued prompt: msg_id={msg_id}")
+
+    def _is_stale_notification(self, msg_id: int, pane: str) -> bool:
+        """Check if this notification is stale (newer exists for same pane)."""
+        latest = max(
+            (int(mid) for mid, e in self.state.items() if e.get("pane") == pane),
+            default=0
+        )
+        return msg_id < latest
 
     def __init__(self, bot_token: str, chat_id: str, state: State, timeout: int = 5):
         # Telegram API requires timeout to be int >= 1
@@ -210,17 +222,12 @@ class TelegramPoller:
         # Check if stale (newer message exists for same pane)
         # Skip this check for permission_prompt - they use tool_result check instead
         # (Claude can queue multiple tool_use, so newer notification != stale)
-        if not is_permission:
-            latest = max(
-                (int(mid) for mid, e in self.state.items() if e.get("pane") == pane),
-                default=0
-            )
-            if cb_msg_id < latest:
-                answer_callback(self.bot_token, cb_id, "Stale prompt")
-                update_message_buttons(self.bot_token, cb_chat_id, cb_msg_id, "⏰ Expired")
-                self.state.update(msg_key, handled=True)
-                log(f"  Stale prompt for pane {pane}")
-                return
+        if not is_permission and self._is_stale_notification(cb_msg_id, pane):
+            answer_callback(self.bot_token, cb_id, "Stale prompt")
+            update_message_buttons(self.bot_token, cb_chat_id, cb_msg_id, "⏰ Expired")
+            self.state.update(msg_key, handled=True)
+            log(f"  Stale prompt for pane {pane}")
+            return
 
         # Check if tool was already handled via TUI
         transcript_path = entry.get("transcript_path")
@@ -248,18 +255,7 @@ class TelegramPoller:
                     # If denied, expire all other pending permission prompts for this pane
                     # (denial interrupts the whole batch in Claude)
                     if cb_data == "n":
-                        for other_msg_id, other_entry in list(self.state.items()):
-                            if other_msg_id == msg_key:
-                                continue
-                            if other_entry.get("pane") != pane:
-                                continue
-                            if other_entry.get("type") != "permission_prompt":
-                                continue
-                            if other_entry.get("handled"):
-                                continue
-                            update_message_buttons(self.bot_token, cb_chat_id, int(other_msg_id), "❌ Denied via batch denial")
-                            self.state.update(other_msg_id, handled=True)
-                            log(f"  Expired queued prompt: msg_id={other_msg_id}")
+                        self._expire_batch_permissions(pane, msg_key, cb_chat_id)
                 else:
                     answer_callback(self.bot_token, cb_id, "Failed: pane dead")
                     self.state.update(msg_key, handled=True)

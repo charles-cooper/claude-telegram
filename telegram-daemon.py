@@ -28,7 +28,7 @@ from telegram_utils import (
 )
 from transcript_watcher import TranscriptManager, PendingTool, CompactionEvent, IdleEvent, ActivityInfo
 from telegram_poller import TelegramPoller
-from registry import get_config, get_registry, is_managed_directory
+from registry import get_config, get_registry, is_managed_directory, read_marker_file
 from session_operator import is_operator_pane
 from session_worker import is_worker_pane, register_existing_session
 
@@ -277,7 +277,6 @@ def send_to_chat_or_topic(bot_token: str, chat_id: str, pane: str, cwd: str, msg
             return send_to_topic(bot_token, group_id, topic_id, msg, reply_markup, parse_mode)
 
     # 3. Managed directory (marker exists but not in registry) -> recover
-    from registry import read_marker_file
     marker = read_marker_file(cwd)
     if marker:
         task_name = marker.get("name")
