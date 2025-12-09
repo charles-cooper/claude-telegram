@@ -284,8 +284,9 @@ The daemon discovers transcripts via:
 
 ### Typing Indicator
 
-Sends Telegram "typing" action when any new content is detected in a transcript.
+Sends Telegram "typing" action only when Claude is actually working (transcript activity).
 - Triggers on any new line in transcript (tool_use, thinking, text, etc.)
+- Does NOT trigger on message receipt - only on Claude's response activity
 - Routed to appropriate topic based on pane/cwd
 - Automatically cancelled when message is sent
 

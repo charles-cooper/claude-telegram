@@ -7,8 +7,7 @@ import time
 import requests
 
 from telegram_utils import (
-    State, answer_callback, send_reply, update_message_buttons, log,
-    send_chat_action
+    State, answer_callback, send_reply, update_message_buttons, log
 )
 from bot_commands import CommandHandler
 from registry import get_config
@@ -315,7 +314,6 @@ class TelegramPoller:
         topic_id = msg.get("message_thread_id")
         formatted = self._format_incoming_message(msg)
         if send_fn(formatted):
-            send_chat_action(self.bot_token, chat_id, "typing", topic_id)
             log(f"  Routed to {target_name}")
             return True
         log(f"  Failed to route to {target_name}")
@@ -361,8 +359,6 @@ class TelegramPoller:
                     log(f"  Sent to permission prompt on pane {pane}: {text[:50]}...")
                     update_message_buttons(self.bot_token, chat_id, reply_to, "💬 Replied")
                     self.state.update(str(reply_to), handled=True)
-                    topic_id = msg.get("message_thread_id")
-                    send_chat_action(self.bot_token, chat_id, "typing", topic_id)
                 else:
                     log(f"  Failed (pane {pane} dead)")
                 return True
@@ -382,8 +378,6 @@ class TelegramPoller:
             # Send as regular input to pane
             if send_to_pane(pane, text):
                 log(f"  Sent to pane {pane}: {text[:50]}...")
-                topic_id = msg.get("message_thread_id")
-                send_chat_action(self.bot_token, chat_id, "typing", topic_id)
             else:
                 log(f"  Failed (pane {pane} dead)")
             return True
