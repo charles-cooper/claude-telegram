@@ -663,6 +663,6 @@ If daemon crashes between creating a Telegram topic and persisting the topic_id,
 - [ ] Status indicators in topic names (stub exists, not implemented)
 
 ### Phase 5: Recovery & Polish
-- [x] Registry recovery from `.claude/army.json` scans (`/recover`)
+- [x] Registry recovery from `.claude/army.json` scans (`/rebuild-registry`)
 - [x] Natural language command interpretation (via Operator)
 - [ ] Cleanup after PR merge (not automated)
