@@ -146,43 +146,40 @@ class CommandHandler:
             self._reply(chat_id, msg_id, "Operator not available")
 
     def _handle_debug(self, msg: dict, chat_id: str, msg_id: int, text: str):
-        """Handle /debug - send debug request to operator."""
+        """Handle /debug - dump debug info for a message."""
         if not msg.get("reply_to_message"):
             self._reply(chat_id, msg_id, "Reply to a message to debug it")
             return
 
-        # Extract note after /debug
-        user_note = ""
-        text_lower = text.lower()
-        if text_lower.startswith("/debug"):
-            user_note = text[6:].strip()
-        elif text_lower.startswith("debug"):
-            user_note = text[5:].strip()
-
-        reply_to_id = msg["reply_to_message"]["message_id"]
-
-        # Build debug request for operator
-        lines = [f"[DEBUG] msg_id={reply_to_id}"]
-        if user_note:
-            lines.append(f"User note: {user_note}")
-
-        # Include full reply context
-        reply_ctx = self._format_reply_context(msg)
-        if reply_ctx:
-            lines.append(reply_ctx)
-
-        # Add state info if available
+        reply_to = msg["reply_to_message"]
+        reply_to_id = reply_to.get("message_id")
         reply_str = str(reply_to_id)
+
+        # Build debug output
+        lines = [f"*Debug: msg_id={reply_to_id}*"]
+
+        # Message metadata
+        reply_from = reply_to.get("from", {})
+        lines.append(f"From: {reply_from.get('first_name', '?')} (id={reply_from.get('id', '?')})")
+        lines.append(f"Date: {reply_to.get('date', '?')}")
+
+        # Text preview
+        reply_text = reply_to.get("text", "")
+        if reply_text:
+            preview = reply_text[:100] + "..." if len(reply_text) > 100 else reply_text
+            lines.append(f"Text: {preview}")
+
+        # State info
         if reply_str in self.state:
             entry = self.state.get(reply_str)
-            lines.append(f"Full state: {json.dumps(entry)}")
-
-        topic_id = msg.get("message_thread_id")
-        if send_to_operator("\n".join(lines)):
-            self._typing(chat_id, topic_id)
-            log(f"  /debug sent to operator for msg_id={reply_to_id}")
+            lines.append("")
+            lines.append("*State:*")
+            lines.append(f"```\n{json.dumps(entry, indent=2)}\n```")
         else:
-            self._reply(chat_id, msg_id, "Operator not available")
+            lines.append("\n_No state tracked for this message_")
+
+        self._reply(chat_id, msg_id, "\n".join(lines))
+        log(f"  /debug for msg_id={reply_to_id}")
 
     def _handle_setup(self, msg: dict, chat_id: str, msg_id: int):
         """Handle /setup - initialize group as Claude Army control center."""
@@ -320,7 +317,7 @@ class CommandHandler:
 /recover - Rebuild registry from marker files
 /help - Show this help message
 /todo <item> - Add todo to Operator queue
-/debug - Debug a message (reply to it)
+/debug - Show debug info for a message (reply to it)
 
 *Operator Commands* (natural language):
 - "Create task X in repo Y"
