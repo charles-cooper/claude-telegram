@@ -77,8 +77,8 @@ def start_operator_session() -> str | None:
         log("Failed to get pane ID")
         return None
 
-    # Start Claude - try resume, fall back to fresh if no conversation exists
-    subprocess.run(["tmux", "send-keys", "-t", pane, "claude --resume || claude", "Enter"])
+    # Start Claude - try continue (auto-resumes most recent), fall back to fresh
+    subprocess.run(["tmux", "send-keys", "-t", pane, "claude --continue || claude", "Enter"])
 
     config = get_config()
     config.operator_pane = pane

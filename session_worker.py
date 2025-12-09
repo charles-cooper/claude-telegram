@@ -88,7 +88,7 @@ def _kill_tmux_session(session_name: str) -> bool:
 def _start_claude(pane: str, description: str, resume: bool = False):
     """Start Claude in a pane."""
     if resume:
-        cmd = f"claude --resume || claude {shell_quote(description)}"
+        cmd = f"claude --continue || claude {shell_quote(description)}"
     else:
         cmd = f"claude {shell_quote(description)}"
     subprocess.run(["tmux", "send-keys", "-t", pane, cmd, "Enter"])
