@@ -50,6 +50,17 @@ def start_operator_session() -> str | None:
     # Ensure operator directory exists
     OPERATOR_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Create symlinks to specs if they don't exist
+    symlinks = {
+        "OPERATOR_SPEC.md": "../OPERATOR_SPEC.md",
+        "AGENTS.md": "../OPERATOR_AGENTS.md",  # Operator's instructions
+        "CLAUDE.md": "AGENTS.md",  # Claude reads CLAUDE.md by default
+    }
+    for name, target in symlinks.items():
+        link = OPERATOR_DIR / name
+        if not link.exists():
+            link.symlink_to(target)
+
     # Create new detached tmux session in operator directory
     result = subprocess.run(
         ["tmux", "new-session", "-d", "-s", OPERATOR_SESSION, "-c", str(OPERATOR_DIR)],
