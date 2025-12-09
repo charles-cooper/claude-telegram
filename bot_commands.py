@@ -12,6 +12,32 @@ from session_operator import (
 )
 
 
+def build_cleanup_prompt(task_name: str, task_data: dict) -> str:
+    """Build the cleanup request prompt for operator."""
+    lines = ["=" * 40]
+    lines.append("CLEANUP REQUEST")
+    lines.append("=" * 40)
+    lines.append("")
+    lines.append(f"Task: {task_name}")
+    lines.append(f"Type: {task_data.get('type', 'session')}")
+    lines.append(f"Path: {task_data.get('path', '?')}")
+    lines.append(f"Topic ID: {task_data.get('topic_id', '?')}")
+    lines.append(f"Status: {task_data.get('status', '?')}")
+    lines.append("")
+    lines.append("-" * 40)
+    lines.append("Please clean up this task:")
+    lines.append("1. Stop the tmux session if running")
+    lines.append("2. Close the Telegram topic")
+    lines.append("3. Remove from registry")
+    lines.append("4. For worktrees: delete the worktree directory")
+    lines.append("5. For sessions: just remove the marker file")
+    lines.append("")
+    lines.append("Use: from session_worker import cleanup_task")
+    lines.append(f"     cleanup_task('{task_name}')")
+    lines.append("-" * 40)
+    return "\n".join(lines)
+
+
 class CommandHandler:
     """Handles bot commands like /debug, /todo, /setup."""
 
@@ -91,6 +117,11 @@ class CommandHandler:
         # /recover - rebuild registry from marker files
         if text_lower.startswith("/recover"):
             self._handle_recover(chat_id, msg_id)
+            return True
+
+        # /cleanup - clean up a task (routes to operator)
+        if text_lower.startswith("/cleanup"):
+            self._handle_cleanup(msg, chat_id, msg_id, text, topic_id)
             return True
 
         return False
@@ -305,6 +336,33 @@ class CommandHandler:
         else:
             self._reply(chat_id, msg_id, "No new tasks found.")
 
+    def _handle_cleanup(self, msg: dict, chat_id: str, msg_id: int, text: str, topic_id: int | None):
+        """Handle /cleanup - route cleanup request to operator."""
+        # Extract task name from command (strip @botname suffix first)
+        clean_text = text.split("@")[0] if "@" in text else text
+        parts = clean_text.split(None, 1)
+        task_name = parts[1].strip() if len(parts) > 1 else None
+
+        if not task_name:
+            registry = get_registry()
+            tasks = registry.get_all_tasks()
+            if tasks:
+                task_list = ", ".join(name for name, _ in tasks)
+                self._reply(chat_id, msg_id, f"Usage: /cleanup <task_name>\n\nAvailable tasks: {task_list}")
+            else:
+                self._reply(chat_id, msg_id, "Usage: /cleanup <task_name>\n\nNo active tasks.")
+            return
+
+        registry = get_registry()
+        task_data = registry.get_task(task_name)
+        if not task_data:
+            self._reply(chat_id, msg_id, f"Task '{task_name}' not found. Run /status to see tasks.")
+            return
+
+        prompt = build_cleanup_prompt(task_name, task_data)
+        send_to_operator(prompt)
+        log(f"  /cleanup sent to operator: {task_name}")
+
     def _handle_help(self, chat_id: str, msg_id: int):
         """Handle /help - show available commands."""
         config = get_config()
@@ -315,6 +373,7 @@ class CommandHandler:
 /reset - Remove Claude Army configuration
 /status - Show all tasks and status
 /recover - Rebuild registry from marker files
+/cleanup <task> - Clean up a task
 /help - Show this help message
 /todo <item> - Add todo to Operator queue
 /debug - Show debug info for a message (reply to it)
@@ -323,7 +382,6 @@ class CommandHandler:
 - "Create task X in repo Y"
 - "What's the status?"
 - "Pause/resume task X"
-- "Clean up task X"
 """
         if config.is_configured():
             help_text += f"\n_Status: Configured (group {config.group_id})_"
