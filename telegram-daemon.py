@@ -213,7 +213,8 @@ def handle_completed_tools(bot_token: str, state: State, transcript_mgr):
 
     now = time.time()
     for msg_id, entry in list(state.items()):
-        if entry.get("handled"):
+        # Skip if already cleaned up (expired_at set)
+        if entry.get("expired_at"):
             continue
         tool_use_id = entry.get("tool_use_id")
         if not tool_use_id:
@@ -236,7 +237,7 @@ def handle_completed_tools(bot_token: str, state: State, transcript_mgr):
                 else:
                     # Slow response - mark expired so user can see what happened
                     update_message_buttons(bot_token, group_id, int(msg_id), "⏰ Expired")
-                    state.update(msg_id, handled=True)
+                    state.update(msg_id, handled=True, expired_at=now)
                     log(f"Expired (slow response {elapsed:.1f}s): msg_id={msg_id}")
 
 
