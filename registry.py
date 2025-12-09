@@ -135,15 +135,33 @@ class Registry:
     """Cache of tasks. Can be rebuilt from .claude/army.json marker files.
 
     Flat structure: tasks keyed by name, each with type, path, topic_id, etc.
+
+    Auto-reloads from disk when file is modified externally (like Config).
     """
 
     def __init__(self):
-        self._data = _read_json(REGISTRY_FILE)
-        if "tasks" not in self._data:
-            self._data["tasks"] = {}
+        self._registry_cache = _read_json(REGISTRY_FILE)
+        if "tasks" not in self._registry_cache:
+            self._registry_cache["tasks"] = {}
+        self._mtime = REGISTRY_FILE.stat().st_mtime if REGISTRY_FILE.exists() else 0
+
+    @property
+    def _data(self) -> dict:
+        """Access data, reloading from disk if file changed."""
+        try:
+            mtime = REGISTRY_FILE.stat().st_mtime if REGISTRY_FILE.exists() else 0
+            if mtime > self._mtime:
+                self._registry_cache = _read_json(REGISTRY_FILE)
+                if "tasks" not in self._registry_cache:
+                    self._registry_cache["tasks"] = {}
+                self._mtime = mtime
+        except OSError:
+            pass
+        return self._registry_cache
 
     def _flush(self):
-        _write_json(REGISTRY_FILE, self._data)
+        _write_json(REGISTRY_FILE, self._registry_cache)
+        self._mtime = REGISTRY_FILE.stat().st_mtime
 
     @property
     def tasks(self) -> dict:

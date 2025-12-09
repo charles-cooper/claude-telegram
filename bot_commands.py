@@ -88,6 +88,18 @@ class CommandHandler:
         """Show typing indicator."""
         send_chat_action(self.bot_token, chat_id, "typing", topic_id)
 
+    def _reply_sent_to_operator(self, chat_id: str, msg_id: int, topic_id: int | None):
+        """Reply with link to operator topic, unless already in operator topic."""
+        config = get_config()
+        is_operator_topic = topic_id is None or topic_id == config.general_topic_id
+        if is_operator_topic:
+            return
+        group_id = config.group_id
+        general_topic = config.general_topic_id or 1
+        link_chat_id = str(group_id).replace("-100", "")
+        link = f"https://t.me/c/{link_chat_id}/{general_topic}"
+        self._reply(chat_id, msg_id, f"Sent to [Operator]({link})")
+
     def _format_reply_context(self, msg: dict) -> str | None:
         """Format context from a replied-to message for the operator."""
         reply_to = msg.get("reply_to_message")
@@ -380,14 +392,7 @@ class CommandHandler:
         if send_to_operator(prompt):
             self._typing(chat_id, topic_id)
             log(f"  /spawn sent to operator: {request[:50]}...")
-
-            # Reply with link to operator topic
-            config = get_config()
-            group_id = config.group_id
-            general_topic = config.general_topic_id or 1
-            link_chat_id = str(group_id).replace("-100", "")
-            link = f"https://t.me/c/{link_chat_id}/{general_topic}"
-            self._reply(chat_id, msg_id, f"Sent to [Operator]({link})")
+            self._reply_sent_to_operator(chat_id, msg_id, topic_id)
         else:
             self._reply(chat_id, msg_id, "Operator not available")
 
@@ -419,15 +424,7 @@ class CommandHandler:
         prompt = build_cleanup_prompt(task_name, task_data)
         send_to_operator(prompt)
         log(f"  /cleanup sent to operator: {task_name}")
-
-        # Reply with link to operator topic
-        config = get_config()
-        group_id = config.group_id
-        general_topic = config.general_topic_id or 1
-        # Telegram uses chat_id without -100 prefix for links
-        link_chat_id = str(group_id).replace("-100", "")
-        link = f"https://t.me/c/{link_chat_id}/{general_topic}"
-        self._reply(chat_id, msg_id, f"Sent to [Operator]({link})")
+        self._reply_sent_to_operator(chat_id, msg_id, topic_id)
 
     def _get_pane_for_topic(self, topic_id: int | None) -> tuple[str, str] | None:
         """Get (task_name, pane) for a topic. Returns operator for General topic."""
