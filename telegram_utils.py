@@ -275,7 +275,7 @@ def register_bot_commands(bot_token: str):
         {"command": "status", "description": "Show all tasks and status"},
         {"command": "spawn", "description": "Create a new task"},
         {"command": "cleanup", "description": "Clean up a task"},
-        {"command": "tmux", "description": "Show tmux attach command"},
+        {"command": "show_tmux_command", "description": "Show tmux attach command"},
         {"command": "dump", "description": "Dump tmux pane output"},
         {"command": "help", "description": "Show available commands"},
         {"command": "todo", "description": "Add todo to Operator queue"},

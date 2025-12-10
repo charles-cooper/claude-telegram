@@ -202,9 +202,9 @@ class CommandHandler:
             self._handle_cleanup(msg, chat_id, msg_id, text, topic_id)
             return True
 
-        # /tmux - show tmux attach command
-        if text_lower.startswith("/tmux"):
-            self._handle_tmux(chat_id, msg_id, topic_id)
+        # /show-tmux-command - show tmux attach command
+        if text_lower.startswith("/show-tmux-command"):
+            self._handle_show_tmux_command(chat_id, msg_id, topic_id)
             return True
 
         # /dump - dump tmux pane output
@@ -513,8 +513,8 @@ class CommandHandler:
             return (task_name, task_data.get("pane"))
         return None
 
-    def _handle_tmux(self, chat_id: str, msg_id: int, topic_id: int | None):
-        """Handle /tmux - show tmux attach command for task."""
+    def _handle_show_tmux_command(self, chat_id: str, msg_id: int, topic_id: int | None):
+        """Handle /show-tmux-command - show tmux attach command for task."""
         result = self._get_pane_for_topic(topic_id)
         if not result:
             self._reply(chat_id, msg_id, "Send from a task topic to get its tmux command.")
@@ -589,7 +589,7 @@ class CommandHandler:
 /status - Show all tasks and status
 /spawn <desc> - Create a new task
 /cleanup - Clean up current task
-/tmux - Show tmux attach command
+/show-tmux-command - Show tmux attach command
 /dump - Dump tmux pane output
 /help - Show this help message
 /todo <item> - Add todo to Operator queue

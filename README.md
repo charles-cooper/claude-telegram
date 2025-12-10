@@ -143,7 +143,7 @@ You'll be notified when:
 | `/status` | Daemon | Show all active tasks and their status |
 | `/spawn <description>` | Operator | Create a new task |
 | `/cleanup [task]` | Operator | Clean up a task (kill session, remove worktree if applicable) |
-| `/tmux` | Daemon | Show tmux attach command for the current topic's session |
+| `/show-tmux-command` | Daemon | Show tmux attach command for the current topic's session |
 | `/dump` | Daemon | Dump recent tmux pane output for the current topic |
 | `/todo <item>` | Daemon | Add todo to TODO.local.md in task directory |
 | `/debug` | Daemon | Debug a message (reply to the message first) |
