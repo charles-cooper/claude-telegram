@@ -92,15 +92,16 @@ def build_summarize_prompt(tasks: list[tuple[str, dict]]) -> str:
             lines.append(f"Type: {task_data.get('type', 'session')}, Status: {task_data.get('status', '?')}")
             lines.append(f"Path: {task_data.get('path', '?')}")
 
-            # Include TODO.local.md if present
+            # Include TODO files if present
             path = task_data.get("path")
             if path:
-                todo_path = Path(path) / "TODO.local.md"
-                if todo_path.exists():
-                    try:
-                        lines.append(f"TODOs:\n{todo_path.read_text()[:500]}")
-                    except Exception:
-                        pass
+                for todo_file in ["TODO.local.md", "TODO.md"]:
+                    todo_path = Path(path) / todo_file
+                    if todo_path.exists():
+                        try:
+                            lines.append(f"{todo_file}:\n{todo_path.read_text()}")
+                        except Exception:
+                            pass
             lines.append("")
 
     lines.append("-" * 40)
