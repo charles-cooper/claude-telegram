@@ -112,7 +112,10 @@ def stop_operator_session() -> bool:
 
 
 def send_to_operator(text: str) -> bool:
-    """Send text to the Operator Claude pane. Lazily resurrects if needed."""
+    """Send text to the Operator Claude pane. Lazily resurrects if needed.
+
+    Sends Escape first to cancel any pending prompt/dialog, ensuring clean input state.
+    """
     config = get_config()
 
     if not config.is_configured():
@@ -127,6 +130,16 @@ def send_to_operator(text: str) -> bool:
     if not pane:
         log("Failed to get operator pane")
         return False
+
+    log(f"send_to_operator: pane={pane}, text_len={len(text)}")
+
+    # Send Escape first to cancel any permission prompt or dialog
+    # This ensures we're at a clean input state before sending text
+    try:
+        subprocess.run(["tmux", "send-keys", "-t", pane, "Escape"], check=True)
+        time.sleep(0.1)
+    except subprocess.CalledProcessError:
+        pass  # Ignore escape failures, continue with send
 
     return send_to_tmux_pane(pane, text)
 

@@ -180,7 +180,9 @@ def send_to_tmux_pane(pane: str, text: str) -> bool:
     try:
         subprocess.run(["tmux", "send-keys", "-t", pane, "C-u"], check=True)
         subprocess.run(["tmux", "send-keys", "-t", pane, "-l", text], check=True)
-        time.sleep(0.1)
+        # Longer text needs more time for TUI to process before Enter
+        delay = 0.1 + len(text) / 10000  # ~0.1s base + 0.1s per 1000 chars
+        time.sleep(delay)
         subprocess.run(["tmux", "send-keys", "-t", pane, "Enter"], check=True)
         return True
     except subprocess.CalledProcessError:
