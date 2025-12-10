@@ -162,7 +162,7 @@ Note: `group_id`, `general_topic_id`, and `operator_pane` are in `config.json`, 
 | `/spawn <desc>` | Create a new task (routes to operator) |
 | `/cleanup` | Clean up current task (routes to operator) |
 | `/tmux` | Show tmux attach command for current topic |
-| `/show` | Dump tmux pane output for current topic |
+| `/dump` | Dump tmux pane output (50 chars wide, 35 lines max) |
 | `/help` | Show available commands |
 | `/todo <item>` | Add todo (writes to TODO.local.md in task topics, routes to Operator in General topic) |
 | `/debug` | Debug a message (reply to it) |

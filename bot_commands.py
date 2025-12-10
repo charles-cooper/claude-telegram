@@ -171,9 +171,9 @@ class CommandHandler:
             self._handle_tmux(chat_id, msg_id, topic_id)
             return True
 
-        # /show - dump tmux pane output
-        if text_lower.startswith("/show"):
-            self._handle_show(chat_id, msg_id, topic_id)
+        # /dump - dump tmux pane output
+        if text_lower.startswith("/dump"):
+            self._handle_dump(chat_id, msg_id, topic_id)
             return True
 
         # /rebuild-registry - maintenance command to rebuild from markers
@@ -470,13 +470,16 @@ class CommandHandler:
         else:
             self._reply(chat_id, msg_id, f"No tmux session found for '{task_name}'.")
 
-    def _handle_show(self, chat_id: str, msg_id: int, topic_id: int | None):
-        """Handle /show - dump tmux pane output."""
+    def _handle_dump(self, chat_id: str, msg_id: int, topic_id: int | None):
+        """Handle /dump - dump tmux pane output.
+
+        Formats output to fit Telegram's 430px message width (~50 chars).
+        """
         import subprocess
 
         result = self._get_pane_for_topic(topic_id)
         if not result:
-            self._reply(chat_id, msg_id, "Send from a task topic to show its output.")
+            self._reply(chat_id, msg_id, "Send from a task topic to dump its output.")
             return
 
         task_name, pane = result
@@ -484,26 +487,35 @@ class CommandHandler:
             self._reply(chat_id, msg_id, f"No tmux pane found for '{task_name}'.")
             return
 
+        # Telegram msgMaxWidth is 430px, ~50 chars to avoid wrapping
+        MAX_WIDTH = 50
+        MAX_LINES = 35
+
         try:
             output = subprocess.run(
-                ["tmux", "capture-pane", "-t", pane, "-p", "-S", "-50"],
+                ["tmux", "capture-pane", "-t", pane, "-p"],
                 capture_output=True, text=True, timeout=5
             )
             if output.returncode != 0:
                 self._reply(chat_id, msg_id, f"Failed to capture pane: {output.stderr}")
                 return
 
-            text = output.stdout.strip()
-            if not text:
+            raw_lines = output.stdout.rstrip('\n').split('\n')
+            if not raw_lines or (len(raw_lines) == 1 and not raw_lines[0]):
                 self._reply(chat_id, msg_id, "_Pane is empty_")
                 return
 
-            # Truncate if too long for Telegram
-            if len(text) > 3500:
-                text = text[-3500:]
-                text = "...\n" + text
+            # Truncate lines to MAX_WIDTH, take last MAX_LINES
+            truncated = []
+            for line in raw_lines[-MAX_LINES:]:
+                if len(line) > MAX_WIDTH:
+                    truncated.append(line[:MAX_WIDTH-1] + "…")
+                else:
+                    truncated.append(line)
 
-            self._reply(chat_id, msg_id, f"```\n{text}\n```")
+            text = '\n'.join(truncated)
+            prefix = f"_{task_name}_ (last {len(truncated)} lines)\n"
+            self._reply(chat_id, msg_id, f"{prefix}```\n{text}\n```")
         except subprocess.TimeoutExpired:
             self._reply(chat_id, msg_id, "Timeout capturing pane.")
         except Exception as e:
@@ -520,7 +532,7 @@ class CommandHandler:
 /spawn <desc> - Create a new task
 /cleanup - Clean up current task
 /tmux - Show tmux attach command
-/show - Dump tmux pane output
+/dump - Dump tmux pane output
 /help - Show this help message
 /todo <item> - Add todo to Operator queue
 /debug - Show debug info for a message (reply to it)
