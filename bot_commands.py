@@ -73,6 +73,42 @@ def build_cleanup_prompt(task_name: str, task_data: dict) -> str:
     return "\n".join(lines)
 
 
+def build_summarize_prompt(tasks: list[tuple[str, dict]]) -> str:
+    """Build the summarize request prompt for operator."""
+    from pathlib import Path
+
+    lines = ["=" * 40]
+    lines.append("SUMMARIZE REQUEST")
+    lines.append("=" * 40)
+    lines.append("")
+    lines.append("Review all tasks and provide a prioritized status summary.")
+    lines.append("")
+
+    if not tasks:
+        lines.append("No active tasks.")
+    else:
+        for task_name, task_data in tasks:
+            lines.append(f"### {task_name}")
+            lines.append(f"Type: {task_data.get('type', 'session')}, Status: {task_data.get('status', '?')}")
+            lines.append(f"Path: {task_data.get('path', '?')}")
+
+            # Include TODO.local.md if present
+            path = task_data.get("path")
+            if path:
+                todo_path = Path(path) / "TODO.local.md"
+                if todo_path.exists():
+                    try:
+                        lines.append(f"TODOs:\n{todo_path.read_text()[:500]}")
+                    except Exception:
+                        pass
+            lines.append("")
+
+    lines.append("-" * 40)
+    lines.append("Prioritize what needs attention. Suggest next steps.")
+    lines.append("-" * 40)
+    return "\n".join(lines)
+
+
 class CommandHandler:
     """Handles bot commands like /debug, /todo, /setup."""
 
@@ -179,6 +215,11 @@ class CommandHandler:
         # /rebuild-registry - maintenance command to rebuild from markers
         if text_lower.startswith("/rebuild-registry"):
             self._handle_rebuild_registry(chat_id, msg_id)
+            return True
+
+        # /summarize - have operator summarize all tasks
+        if text_lower.startswith("/summarize"):
+            self._handle_summarize(chat_id, msg_id, topic_id)
             return True
 
         return False
@@ -383,6 +424,23 @@ class CommandHandler:
         else:
             self._reply(chat_id, msg_id, "No new tasks found.")
 
+    def _handle_summarize(self, chat_id: str, msg_id: int, topic_id: int | None):
+        """Handle /summarize - have operator summarize all tasks."""
+        config = get_config()
+        if not config.is_configured():
+            self._reply(chat_id, msg_id, "Not configured. Run /setup first.")
+            return
+
+        tasks = get_registry().get_all_tasks()
+        prompt = build_summarize_prompt(tasks)
+
+        if send_to_operator(prompt):
+            self._typing(chat_id, topic_id)
+            log("  /summarize sent to operator")
+            self._reply_sent_to_operator(chat_id, msg_id, topic_id)
+        else:
+            self._reply(chat_id, msg_id, "Operator not available")
+
     def _handle_spawn(self, msg: dict, chat_id: str, msg_id: int, text: str, topic_id: int | None):
         """Handle /spawn - route spawn request to operator."""
         request = parse_command_args(text)
@@ -536,6 +594,7 @@ class CommandHandler:
 /help - Show this help message
 /todo <item> - Add todo to Operator queue
 /debug - Show debug info for a message (reply to it)
+/summarize - Have operator summarize all tasks
 /rebuild-registry - Rebuild registry from markers (maintenance)
 
 *Operator Commands* (natural language):

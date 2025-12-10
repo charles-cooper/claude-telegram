@@ -1,6 +1,8 @@
 """Registry and configuration management for Claude Army."""
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -17,56 +19,92 @@ def ensure_dir():
     CLAUDE_ARMY_DIR.mkdir(exist_ok=True)
 
 
-def _read_json(path: Path) -> dict:
-    """Read JSON file, return empty dict if missing/invalid."""
+def _read_json(path: Path) -> dict | None:
+    """Read JSON file. Returns None on error (vs {} for missing file)."""
     if not path.exists():
         return {}
     try:
         return json.loads(path.read_text())
-    except (json.JSONDecodeError, IOError):
-        return {}
+    except json.JSONDecodeError as e:
+        log(f"JSON parse error in {path}: {e}")
+        return None  # Distinguish parse error from missing file
+    except IOError as e:
+        log(f"IO error reading {path}: {e}")
+        return None
 
 
 def _write_json(path: Path, data: dict):
-    """Write JSON file."""
+    """Write JSON file atomically (write to temp, then rename)."""
     ensure_dir()
-    path.write_text(json.dumps(data, indent=2))
+    # Write to temp file in same directory (for atomic rename)
+    fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, 'w') as f:
+            json.dump(data, f, indent=2)
+        os.rename(tmp_path, path)
+    except:
+        # Clean up temp file on failure
+        try:
+            os.unlink(tmp_path)
+        except:
+            pass
+        raise
+
+
+# ============ ReloadableJSON base class ============
+
+class ReloadableJSON:
+    """Base class for JSON files that auto-reload on external modification.
+
+    Subclasses must set self._path before calling super().__init__().
+    """
+
+    def __init__(self):
+        self._cache = {}
+        self._mtime = 0
+        self._reload()
+
+    def _reload(self) -> bool:
+        """Read from disk. Returns True if successful."""
+        data = _read_json(self._path)
+        if data is not None:
+            self._cache = data
+            self._mtime = self._path.stat().st_mtime if self._path.exists() else 0
+            return True
+        return False
+
+    def _maybe_reload(self):
+        """Reload if file changed on disk."""
+        try:
+            mtime = self._path.stat().st_mtime if self._path.exists() else 0
+            if mtime > self._mtime:
+                self._reload()
+        except OSError:
+            pass
+
+    @property
+    def _data(self) -> dict:
+        """Access data, checking for reload first."""
+        self._maybe_reload()
+        return self._cache
+
+    def _flush(self):
+        """Write to disk and update mtime."""
+        _write_json(self._path, self._cache)
+        try:
+            self._mtime = self._path.stat().st_mtime
+        except OSError:
+            pass
 
 
 # ============ Config (persistent settings) ============
 
-class Config:
-    """Persistent configuration (bot settings, group ID, etc.).
-
-    Auto-reloads from disk when file is modified externally.
-    NOTE: This mtime-based reload is a bit hacky - the daemon and operator
-    session both use this singleton, and we need the daemon to see updates
-    made by the operator. May need a cleaner solution (e.g., file watch,
-    explicit reload signal) if this causes issues.
-    """
+class Config(ReloadableJSON):
+    """Persistent configuration (bot settings, group ID, etc.)."""
 
     def __init__(self):
-        self._config_cache = _read_json(CONFIG_FILE)
-        self._mtime = CONFIG_FILE.stat().st_mtime if CONFIG_FILE.exists() else 0
-
-    @property
-    def _data(self) -> dict:
-        """Access data, reloading from disk if file changed."""
-        try:
-            mtime = CONFIG_FILE.stat().st_mtime if CONFIG_FILE.exists() else 0
-            if mtime > self._mtime:
-                self._config_cache = _read_json(CONFIG_FILE)
-                self._mtime = mtime
-        except OSError:
-            pass
-        return self._config_cache
-
-    def _flush(self):
-        _write_json(CONFIG_FILE, self._config_cache)
-        try:
-            self._mtime = CONFIG_FILE.stat().st_mtime
-        except OSError:
-            pass
+        self._path = CONFIG_FILE
+        super().__init__()
 
     def get(self, key: str, default: Any = None) -> Any:
         return self._data.get(key, default)
@@ -125,43 +163,33 @@ class Config:
 
     def clear(self):
         """Clear all configuration."""
-        self._config_cache = {}
+        self._cache = {}
         self._flush()
 
 
 # ============ Registry (cache, rebuildable) ============
 
-class Registry:
+class Registry(ReloadableJSON):
     """Cache of tasks. Can be rebuilt from .claude/army.json marker files.
 
     Flat structure: tasks keyed by name, each with type, path, topic_id, etc.
-
-    Auto-reloads from disk when file is modified externally (like Config).
     """
 
     def __init__(self):
-        self._registry_cache = _read_json(REGISTRY_FILE)
-        if "tasks" not in self._registry_cache:
-            self._registry_cache["tasks"] = {}
-        self._mtime = REGISTRY_FILE.stat().st_mtime if REGISTRY_FILE.exists() else 0
+        self._path = REGISTRY_FILE
+        super().__init__()
+        self._ensure_tasks_key()
 
-    @property
-    def _data(self) -> dict:
-        """Access data, reloading from disk if file changed."""
-        try:
-            mtime = REGISTRY_FILE.stat().st_mtime if REGISTRY_FILE.exists() else 0
-            if mtime > self._mtime:
-                self._registry_cache = _read_json(REGISTRY_FILE)
-                if "tasks" not in self._registry_cache:
-                    self._registry_cache["tasks"] = {}
-                self._mtime = mtime
-        except OSError:
-            pass
-        return self._registry_cache
+    def _reload(self) -> bool:
+        """Override to ensure tasks key exists after reload."""
+        result = super()._reload()
+        self._ensure_tasks_key()
+        return result
 
-    def _flush(self):
-        _write_json(REGISTRY_FILE, self._registry_cache)
-        self._mtime = REGISTRY_FILE.stat().st_mtime
+    def _ensure_tasks_key(self):
+        """Ensure cache has tasks dict."""
+        if "tasks" not in self._cache:
+            self._cache["tasks"] = {}
 
     @property
     def tasks(self) -> dict:
@@ -210,7 +238,7 @@ class Registry:
 
     def clear(self):
         """Clear all registry data."""
-        self._data = {"tasks": {}}
+        self._cache = {"tasks": {}}
         self._flush()
 
 

@@ -166,6 +166,7 @@ Note: `group_id`, `general_topic_id`, and `operator_pane` are in `config.json`, 
 | `/help` | Show available commands |
 | `/todo <item>` | Add todo (writes to TODO.local.md in task topics, routes to Operator in General topic) |
 | `/debug` | Debug a message (reply to it) |
+| `/summarize` | Have operator summarize all tasks and priorities |
 | `/rebuild-registry` | Rebuild registry from marker files (maintenance) |
 
 Commands are registered via `setMyCommands` API at startup.

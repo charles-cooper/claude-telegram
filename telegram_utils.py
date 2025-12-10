@@ -280,6 +280,7 @@ def register_bot_commands(bot_token: str):
         {"command": "help", "description": "Show available commands"},
         {"command": "todo", "description": "Add todo to Operator queue"},
         {"command": "debug", "description": "Show debug info for a message (reply to it)"},
+        {"command": "summarize", "description": "Have operator summarize all tasks"},
         {"command": "rebuild_registry", "description": "Rebuild registry from markers (maintenance)"},
     ]
     resp = requests.post(
