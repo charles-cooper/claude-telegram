@@ -1,23 +1,21 @@
 #!/bin/bash
-# Uninstall Claude Code Telegram notifications
+# Uninstall Claude Code Telegram notifications (Legacy Hook Cleanup)
 #
-# Removes only our hooks from ~/.claude/settings.json, preserving other hooks.
+# NOTE: The modern daemon-based architecture does NOT use hooks.
+# This script is only needed if you previously installed an older version
+# that configured hooks in ~/.claude/settings.json.
 #
-# Test cases:
-#
-# 1. Only our hooks -> hooks section removed entirely:
-#    {"hooks": {"Notification": [our_hook], "PreCompact": [our_hook], "PostCompact": [our_hook]}}
-#    becomes: {}
-#
-# 2. Mixed with other hooks -> only ours removed:
-#    {"hooks": {"Notification": [our_hook, other_hook]}}
-#    becomes: {"hooks": {"Notification": [other_hook]}}
+# Removes only our old telegram-hook.py hooks from ~/.claude/settings.json,
+# preserving other hooks.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SETTINGS_FILE="$HOME/.claude/settings.json"
 HOOK_CMD="python3 $SCRIPT_DIR/telegram-hook.py"
 
-echo "Removing hooks from $SETTINGS_FILE..."
+echo "Claude Code Telegram - Legacy Hook Cleanup"
+echo "==========================================="
+echo
+echo "Removing old telegram-hook.py references from $SETTINGS_FILE..."
 
 if [ -f "$SETTINGS_FILE" ]; then
     python3 << EOF
@@ -56,8 +54,12 @@ settings_file.write_text(json.dumps(settings, indent=2))
 print("Done.")
 EOF
 else
-    echo "No settings file found."
+    echo "No settings file found - nothing to clean up."
 fi
 
 echo
-echo "Hooks removed. Config file ~/telegram.json was NOT removed."
+echo "==========================================="
+echo "Done! Old hook configurations have been removed."
+echo
+echo "Note: Config file ~/telegram.json was NOT removed."
+echo "The modern daemon (telegram-daemon.py) does not use hooks."
