@@ -52,114 +52,15 @@ if [ ! -f "$CONFIG_FILE" ]; then
     echo "Saved to $CONFIG_FILE"
 fi
 
-# Install hooks
 echo
-echo "Installing Claude Code hooks..."
-
-mkdir -p "$HOME/.claude"
-
-HOOK_CMD="python3 $SCRIPT_DIR/telegram-hook.py"
-
-if [ -f "$SETTINGS_FILE" ]; then
-    # Merge with existing settings
-    python3 << EOF
-import json
-from pathlib import Path
-
-settings_file = Path("$SETTINGS_FILE")
-settings = json.loads(settings_file.read_text())
-
-hooks = settings.setdefault("hooks", {})
-
-# Notification hooks
-notif_hooks = hooks.setdefault("Notification", [])
-for matcher in ["permission_prompt"]:
-    entry = {"matcher": matcher, "hooks": [{"type": "command", "command": "$HOOK_CMD"}]}
-    if not any(h.get("matcher") == matcher and h.get("hooks", [{}])[0].get("command") == "$HOOK_CMD" for h in notif_hooks):
-        notif_hooks.append(entry)
-
-# PreCompact hooks (auto and manual)
-precompact_hooks = hooks.setdefault("PreCompact", [])
-for matcher in ["auto", "manual"]:
-    entry = {"matcher": matcher, "hooks": [{"type": "command", "command": "$HOOK_CMD"}]}
-    if not any(h.get("matcher") == matcher and h.get("hooks", [{}])[0].get("command") == "$HOOK_CMD" for h in precompact_hooks):
-        precompact_hooks.append(entry)
-
-# PostCompact hooks (auto and manual)
-postcompact_hooks = hooks.setdefault("PostCompact", [])
-for matcher in ["auto", "manual"]:
-    entry = {"matcher": matcher, "hooks": [{"type": "command", "command": "$HOOK_CMD"}]}
-    if not any(h.get("matcher") == matcher and h.get("hooks", [{}])[0].get("command") == "$HOOK_CMD" for h in postcompact_hooks):
-        postcompact_hooks.append(entry)
-
-settings_file.write_text(json.dumps(settings, indent=2))
-print("Hooks installed.")
-EOF
-else
-    # Create new settings
-    cat > "$SETTINGS_FILE" << EOF
-{
-  "hooks": {
-    "Notification": [
-      {
-        "matcher": "permission_prompt",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOOK_CMD"
-          }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "matcher": "auto",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOOK_CMD"
-          }
-        ]
-      },
-      {
-        "matcher": "manual",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOOK_CMD"
-          }
-        ]
-      }
-    ],
-    "PostCompact": [
-      {
-        "matcher": "auto",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOOK_CMD"
-          }
-        ]
-      },
-      {
-        "matcher": "manual",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOOK_CMD"
-          }
-        ]
-      }
-    ]
-  }
-}
-EOF
-    echo "Created $SETTINGS_FILE"
-fi
-
+echo "============================================="
+echo "Installation complete!"
 echo
-echo "Done! You'll now receive Telegram notifications when:"
-echo "  - Claude asks for permission (Bash, Edit, Write)"
-echo "  - Claude compacts context (both auto and manual)"
+echo "To start receiving Telegram notifications, run the daemon:"
 echo
-echo "Test by running Claude and triggering a permission prompt."
+echo "  ./telegram-daemon.py"
+echo
+echo "For background operation:"
+echo
+echo "  nohup ./telegram-daemon.py > /tmp/telegram-daemon.log 2>&1 &"
+echo

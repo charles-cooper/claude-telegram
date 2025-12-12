@@ -42,57 +42,25 @@ The install script will:
 1. Install the `requests` Python package if missing
 2. Prompt for your Telegram bot token and chat ID
 3. Save credentials to `~/telegram.json`
-4. Add hooks to `~/.claude/settings.json` (merges with existing settings)
 
-To uninstall:
-
-```bash
-./uninstall.sh
-```
+To get bot credentials:
+- **bot_token**: Message @BotFather on Telegram, send `/newbot`
+- **chat_id**: Message your bot, then visit `https://api.telegram.org/bot<TOKEN>/getUpdates`
 
 ### Manual install
 
 1. Install dependencies:
-
-```bash
-pip3 install requests
-```
+   ```bash
+   pip3 install requests
+   ```
 
 2. Create `~/telegram.json` with your bot credentials:
-
-```json
-{
-  "bot_token": "123456:ABC-DEF...",
-  "chat_id": "123456789"
-}
-```
-
-To get these:
-- **bot_token**: Message @BotFather on Telegram, send `/newbot`
-- **chat_id**: Message your bot, then visit `https://api.telegram.org/bot<TOKEN>/getUpdates`
-
-3. Add hooks to `~/.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "Notification": [
-      {
-        "matcher": "permission_prompt",
-        "hooks": [{"type": "command", "command": "python3 /path/to/telegram-hook.py"}]
-      }
-    ],
-    "PreCompact": [
-      {"matcher": "auto", "hooks": [{"type": "command", "command": "python3 /path/to/telegram-hook.py"}]},
-      {"matcher": "manual", "hooks": [{"type": "command", "command": "python3 /path/to/telegram-hook.py"}]}
-    ],
-    "PostCompact": [
-      {"matcher": "auto", "hooks": [{"type": "command", "command": "python3 /path/to/telegram-hook.py"}]},
-      {"matcher": "manual", "hooks": [{"type": "command", "command": "python3 /path/to/telegram-hook.py"}]}
-    ]
-  }
-}
-```
+   ```json
+   {
+     "bot_token": "123456:ABC-DEF...",
+     "chat_id": "123456789"
+   }
+   ```
 
 ## Running the Daemon
 
@@ -168,17 +136,20 @@ You'll be notified when:
 
 ## Architecture
 
-Two components work together:
+The system uses a daemon-based architecture:
 
-1. **telegram-hook.py** - Hook script invoked by Claude Code on events, sends notifications to Telegram
-2. **telegram-daemon.py** - Long-running daemon that polls Telegram and injects responses via tmux
+**telegram-daemon.py** - Long-running daemon that:
+- Polls Claude Code transcript files for events (permission prompts, context compaction, etc.)
+- Polls Telegram API for button clicks and text replies
+- Sends notifications to Telegram with appropriate routing (topics for multi-instance setups)
+- Injects responses back to Claude via tmux keystrokes
+- Handles bot commands and task management
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `~/telegram.json` | Bot token and chat ID |
-| `~/.claude/settings.json` | Claude Code hooks config |
+| `~/telegram.json` | Bot token and chat ID configuration |
 | `/tmp/claude-telegram-state.json` | Message state for reply tracking |
-| `/tmp/claude-telegram-state.lock` | File lock for state |
-| `/tmp/claude-telegram-hook.log` | Debug log |
+| `/tmp/claude-telegram-daemon.pid` | PID file for daemon singleton check |
+| `/tmp/task-registry.json` | Registry of active Claude tasks/sessions |

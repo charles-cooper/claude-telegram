@@ -163,6 +163,140 @@ def format_tool_permission(tool_name: str, tool_input: dict, markdown_v2: bool =
         return f"{esc('Claude is asking permission to use')} {esc(tool_name)}{esc(':')}\n\n```\n{input_str}\n```"
 
 
+def _parse_code_blocks(text: str) -> list[dict]:
+    """Parse all code blocks in the message.
+
+    Returns list of dicts with: {"start": int, "end": int, "language": str, "closed": bool}
+    """
+    blocks = []
+    pos = 0
+
+    while True:
+        # Find opening ```
+        start = text.find('```', pos)
+        if start == -1:
+            break
+
+        # Extract language (rest of line after ```)
+        line_end = text.find('\n', start)
+        if line_end == -1:
+            # Malformed: ``` at end of text without newline
+            blocks.append({"start": start, "end": len(text), "language": "", "closed": False})
+            break
+
+        language = text[start + 3:line_end].strip()
+
+        # Find closing ```
+        end = text.find('\n```', line_end)
+        if end == -1:
+            # Unclosed block
+            blocks.append({"start": start, "end": len(text), "language": language, "closed": False})
+            break
+
+        # Include the closing ``` in the block
+        blocks.append({"start": start, "end": end + 4, "language": language, "closed": True})
+        pos = end + 4
+
+    return blocks
+
+
+def _find_split_point(text: str, start: int, target: int, code_blocks: list[dict]) -> dict:
+    """Find optimal split point, preferring natural boundaries.
+
+    Returns: {"position": int, "in_code_block": bool, "block_info": dict | None}
+    """
+    # Check if we're in a code block at target position
+    in_block = None
+    for block in code_blocks:
+        if block["start"] <= target <= block["end"]:
+            in_block = block
+            break
+
+    # Search backward for best split point
+    # Priority 1: Double newline (paragraph break) outside code
+    if not in_block:
+        for offset in range(target, start, -1):
+            if offset > 0 and text[offset - 1:offset + 1] == '\n\n':
+                return {"position": offset, "in_code_block": False, "block_info": None}
+
+    # Priority 2: Single newline outside code
+    if not in_block:
+        for offset in range(target, start, -1):
+            if text[offset] == '\n':
+                return {"position": offset, "in_code_block": False, "block_info": None}
+
+    # Priority 3: Single newline inside code (if we must)
+    if in_block:
+        for offset in range(target, max(start, in_block["start"]), -1):
+            if text[offset] == '\n':
+                return {"position": offset, "in_code_block": True, "block_info": in_block}
+
+    # Last resort: hard split at target
+    return {"position": target, "in_code_block": in_block is not None, "block_info": in_block}
+
+
+def split_message_with_code_blocks(text: str, max_length: int = 4096) -> list[str]:
+    """Split message into chunks that fit Telegram's limit, preserving code blocks.
+
+    - Splits messages exceeding max_length into multiple chunks
+    - Properly closes and reopens code blocks at split points
+    - Adds continuation markers like "(1/3)", "(2/3)" to each chunk
+    - Returns list of message chunks
+    """
+    # Safety margin for code block tags and continuation markers
+    SAFE_LIMIT = 4000
+
+    # Parse code blocks
+    code_blocks = _parse_code_blocks(text)
+
+    # If message fits, return as-is
+    if len(text) <= max_length:
+        return [text]
+
+    chunks = []
+    current_pos = 0
+    in_continued_block = None  # Track if we're continuing a code block
+
+    while current_pos < len(text):
+        remaining = text[current_pos:]
+
+        # Check if we can fit the rest
+        if len(remaining) <= SAFE_LIMIT:
+            # If we're continuing a code block, prepend opening tag
+            if in_continued_block:
+                remaining = f"```{in_continued_block['language']}\n{remaining}"
+            chunks.append(remaining)
+            break
+
+        # Find optimal split point
+        split_info = _find_split_point(text, current_pos, current_pos + SAFE_LIMIT, code_blocks)
+        split_pos = split_info["position"]
+
+        # Extract chunk
+        chunk = text[current_pos:split_pos]
+
+        # If we're continuing a code block from previous chunk, prepend opening tag
+        if in_continued_block:
+            chunk = f"```{in_continued_block['language']}\n{chunk}"
+
+        # If we're splitting inside a code block, close it
+        if split_info["in_code_block"]:
+            chunk += '\n```'
+            in_continued_block = split_info["block_info"]
+        else:
+            in_continued_block = None
+
+        chunks.append(chunk)
+        current_pos = split_pos
+
+    # Add continuation markers
+    if len(chunks) > 1:
+        total = len(chunks)
+        chunks = [f"({i + 1}/{total}) {chunk}" for i, chunk in enumerate(chunks)]
+
+    return chunks
+
+
 def pane_exists(pane: str) -> bool:
     """Check if a tmux pane exists."""
     result = subprocess.run(
@@ -189,12 +323,8 @@ def send_to_tmux_pane(pane: str, text: str) -> bool:
         return False
 
 
-def send_telegram(bot_token: str, chat_id: str, msg: str, tool_name: str = None, reply_markup: dict = None, parse_mode: str = "Markdown") -> dict | None:
-    """Send message to Telegram. Returns response JSON on success.
-
-    parse_mode: "Markdown", "MarkdownV2", or "HTML"
-    For MarkdownV2, caller must escape text pieces before assembly (use escape_markdown_v2).
-    """
+def _send_single_telegram(bot_token: str, chat_id: str, msg: str, parse_mode: str, reply_markup: dict = None) -> dict | None:
+    """Send a single message to Telegram (internal helper). Returns response JSON on success."""
     payload = {"chat_id": chat_id, "text": msg, "parse_mode": parse_mode}
 
     if reply_markup:
@@ -219,6 +349,27 @@ def send_telegram(bot_token: str, chat_id: str, msg: str, tool_name: str = None,
     return resp.json()
 
 
+def send_telegram(bot_token: str, chat_id: str, msg: str, tool_name: str = None, reply_markup: dict = None, parse_mode: str = "Markdown") -> dict | None:
+    """Send message to Telegram. Returns response JSON on success.
+
+    Automatically splits messages exceeding 4096 characters into multiple chunks.
+    Code blocks are properly closed and reopened across splits.
+    Buttons (reply_markup) appear only on the last chunk.
+
+    parse_mode: "Markdown", "MarkdownV2", or "HTML"
+    For MarkdownV2, caller must escape text pieces before assembly (use escape_markdown_v2).
+    """
+    # Split message if needed
+    chunks = split_message_with_code_blocks(msg)
+
+    # Send all chunks except last without buttons
+    for chunk in chunks[:-1]:
+        _send_single_telegram(bot_token, chat_id, chunk, parse_mode, None)
+
+    # Send last chunk with reply_markup (buttons)
+    return _send_single_telegram(bot_token, chat_id, chunks[-1], parse_mode, reply_markup)
+
+
 def answer_callback(bot_token: str, callback_id: str, text: str = None):
     """Answer a callback query to dismiss the loading state."""
     requests.post(
@@ -228,14 +379,26 @@ def answer_callback(bot_token: str, callback_id: str, text: str = None):
 
 
 def send_reply(bot_token: str, chat_id: str, reply_to_msg_id: int, text: str, parse_mode: str = None):
-    """Send a reply message on Telegram."""
-    payload = {"chat_id": chat_id, "text": text, "reply_to_message_id": reply_to_msg_id}
+    """Send a reply message on Telegram.
+
+    Automatically splits messages exceeding 4096 characters into multiple chunks.
+    Only the first chunk maintains the reply reference; subsequent chunks are sent as regular messages.
+    """
+    # Split message if needed
+    chunks = split_message_with_code_blocks(text)
+
+    # Send first chunk with reply reference
+    payload = {"chat_id": chat_id, "text": chunks[0], "reply_to_message_id": reply_to_msg_id}
     if parse_mode:
         payload["parse_mode"] = parse_mode
     requests.post(
         f"https://api.telegram.org/bot{bot_token}/sendMessage",
         json=payload
     )
+
+    # Send remaining chunks as regular messages
+    for chunk in chunks[1:]:
+        _send_single_telegram(bot_token, chat_id, chunk, parse_mode or "Markdown", None)
 
 
 def update_message_buttons(bot_token: str, chat_id: str, msg_id: int, label: str):
@@ -376,13 +539,9 @@ def edit_forum_topic(bot_token: str, chat_id: str, topic_id: int, name: str = No
     return resp.ok
 
 
-def send_to_topic(bot_token: str, chat_id: str, topic_id: int, text: str,
-                  reply_markup: dict = None, parse_mode: str = "MarkdownV2") -> dict | None:
-    """Send message to a specific forum topic. Returns response JSON on success.
-
-    For the General topic (topic_id=1), don't pass message_thread_id as Telegram
-    expects messages to the General topic to be sent without it.
-    """
+def _send_single_to_topic(bot_token: str, chat_id: str, topic_id: int, text: str,
+                          parse_mode: str, reply_markup: dict = None) -> dict | None:
+    """Send a single message to a forum topic (internal helper). Returns response JSON on success."""
     payload = {
         "chat_id": chat_id,
         "text": text,
@@ -411,6 +570,28 @@ def send_to_topic(bot_token: str, chat_id: str, topic_id: int, text: str,
         log(f"Failed to send to topic {topic_id}: {resp.text}")
         return None
     return resp.json()
+
+
+def send_to_topic(bot_token: str, chat_id: str, topic_id: int, text: str,
+                  reply_markup: dict = None, parse_mode: str = "MarkdownV2") -> dict | None:
+    """Send message to a specific forum topic. Returns response JSON on success.
+
+    Automatically splits messages exceeding 4096 characters into multiple chunks.
+    Code blocks are properly closed and reopened across splits.
+    Buttons (reply_markup) appear only on the last chunk.
+
+    For the General topic (topic_id=1), don't pass message_thread_id as Telegram
+    expects messages to the General topic to be sent without it.
+    """
+    # Split message if needed
+    chunks = split_message_with_code_blocks(text)
+
+    # Send all chunks except last without buttons
+    for chunk in chunks[:-1]:
+        _send_single_to_topic(bot_token, chat_id, topic_id, chunk, parse_mode, None)
+
+    # Send last chunk with reply_markup (buttons)
+    return _send_single_to_topic(bot_token, chat_id, topic_id, chunks[-1], parse_mode, reply_markup)
 
 
 def get_chat_administrators(bot_token: str, chat_id: str) -> list | None:
